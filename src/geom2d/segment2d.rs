@@ -9,6 +9,6 @@ pub struct Segment2D {
 impl Segment2D {
 
     pub fn length(&self) -> f64 {
-        Point2D::distance(&self.start_pt, &self.end_pt)
+        Point2D::dist2d(&self.start_pt, &self.end_pt)
     }
 }
