@@ -8,8 +8,12 @@ use crate::geom2d::Segment2D;
 use crate::geom3d::Point3D;
 use crate::geom3d::Segment3D;
 
+use crate::orientations::Axis;
+use crate::orientations::GeolPlane;
+
 pub mod geom2d;
 pub mod geom3d;
+pub mod orientations;
 
 
 #[pymodule]
@@ -28,6 +32,13 @@ fn misah(python: Python, module: &PyModule) -> PyResult<()> {
 
     geom3d.add_class::<Point3D>()?;
     geom3d.add_class::<Segment3D>()?;
+
+    let orientations = PyModule::new(python, "orientations")?;
+    py_run!(python, orientations, "import sys; sys.modules['misah.orientations'] = orientations");
+    module.add_submodule(orientations)?;
+
+    orientations.add_class::<Axis>()?;
+    orientations.add_class::<GeolPlane>()?;
 
     Ok(())
 }
