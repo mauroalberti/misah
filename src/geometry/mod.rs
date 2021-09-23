@@ -1,2 +1,2 @@
-mod space2d;
-mod space3d;
+pub mod space2d;
+pub mod space3d;

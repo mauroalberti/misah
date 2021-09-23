@@ -2,17 +2,13 @@
 use pyo3::prelude::*;
 use pyo3::{PyResult, Python, py_run};
 
-use crate::geometry::Point2D;
-use crate::geometry::Segment2D;
+use crate::geometry::space2d::{Point2D, Segment2D};
 
-use crate::geometry::Point3D;
-use crate::geometry::Segment3D;
+use crate::geometry::space3d::{Point3D, Segment3D};
 
-use crate::georeferenced::GeoArray;
-use crate::georeferenced::GeoTransform;
+use crate::georeferenced::space2d::raster::{GeoArray, GeoTransform};
 
-use crate::orientations::Axis;
-use crate::orientations::GeolPlane;
+use crate::orientations::space3d::{Axis, GeolPlane};
 
 pub mod geometry;
 pub mod georeferenced;
@@ -52,7 +48,6 @@ fn misah(python: Python, module: &PyModule) -> PyResult<()> {
     py_run!(python, georeferenced_raster, "import sys; sys.modules['misah.georeferenced.space2d.raster'] = georeferenced.space2d.raster");
     georeferenced.add_submodule(georeferenced_raster)?;
 
-    georeferenced_raster.add_class::<GeoArray>()?;
     georeferenced_raster.add_class::<GeoTransform>()?;
 
     let orientations = PyModule::new(python, "orientations")?;

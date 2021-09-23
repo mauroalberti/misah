@@ -1,9 +1,9 @@
 // private sub-module defined in other files
-mod axis;
-mod geolplane;
+pub mod axis;
+pub mod geolplane;
 
 // exports identifiers from private sub-modules in the current module namespace
-pub use self::orientations::space3d::axis::Axis;
-pub use self::orientations::space3d::geolplane::GeolPlane;
+pub use self::axis::Axis;
+pub use self::geolplane::GeolPlane;
 
 

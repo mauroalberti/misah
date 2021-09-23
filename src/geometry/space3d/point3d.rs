@@ -3,11 +3,11 @@ use pyo3::prelude::*;
 #[pyclass]
 #[derive(Clone, Copy)]
 pub struct Point3D {
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub x: f64,
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub y: f64,
-    #[pyo3(get, set)]
+    #[pyo3(get)]
     pub z: f64
 }
 

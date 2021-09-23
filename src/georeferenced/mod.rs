@@ -1,1 +1,1 @@
-mod space2d;
+pub mod space2d;

@@ -1,1 +1,1 @@
-mod raster;
+pub mod raster;
