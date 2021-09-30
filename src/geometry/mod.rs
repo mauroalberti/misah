@@ -1,2 +1,2 @@
-pub mod space2d;
-pub mod space3d;
+pub mod geom2d;
+pub mod geom3d;
