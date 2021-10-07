@@ -4,7 +4,6 @@ module strain
 
     contains
 
-
         !------------------------
         !  incremental strain tensor calculation from strike, dip and rake
 
@@ -37,14 +36,12 @@ module strain
 
         !------------------------
 
-
         !------------------------
         !  incremental strain tensor calculation from focal mechanisms
 
         function incremstraintensorcalc1(Tvect1,Pvect1) result(incrstraintens)
 
             !  Created: 2008-01-27
-
 
             type(vector), intent(in) :: Tvect1, Pvect1
             real (kind=r8b) :: incrstraintens(3,3)

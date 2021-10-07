@@ -7,11 +7,11 @@ module faults
         type (plane) :: fltplane
         type (axis) :: slickenline
         real (kind=r8b)	:: rake_aki
-        type(vector) :: faultnorm_vect,slickenl_vect
+        type(vector) :: faultnorm_vect, slickenl_vect
         type(triad_axes) :: focmech ! 3 mutually orthogonal axes (as trend and plunge) representing T, P and B
-        type(orthonormal_triad) :: fochmecv !X=T, Y=P, Z=B kinematic axes
+        type(orthonormal_triad) :: fochmecv ! X=T, Y=P, Z=B kinematic axes
         type(spherical_loc) :: sphercoord
-        real(kind=r8b) :: spatloc(3) !x,y,z coordinates
+        real(kind=r8b) :: spatloc(3) ! x, y, z coordinates
         real(kind=r8b) :: t
     end type fault_datum
 
@@ -19,10 +19,10 @@ module faults
         sequence
         integer (kind=i4b) :: id
         real(kind=r8b) :: time
-        real(kind=r8b) :: spatloc(3) !x,y,z coordinates
-        type(vector) :: faultnorm_vect,slickenl_vect
+        real(kind=r8b) :: spatloc(3) ! x, y, z coordinates
+        type(vector) :: faultnorm_vect, slickenl_vect
         real(kind=r8b) :: mom_tens(3,3)
-        type(orthonormal_triad) :: fochmecv !X=T, Y=P, Z=B kinematic axes
+        type(orthonormal_triad) :: fochmecv ! X=T, Y=P, Z=B kinematic axes
     end type fault_proc
 
     ! pairwise or central statistics
@@ -35,11 +35,10 @@ module faults
 
 contains
 
-
     !--------------------------
     ! calculates slikenline vector from strike, dip, rake
 
-    type(vector) function faultrake2slick_vector(strike_rhr,dipangle,rake_aki) result(slick_vect)
+    type(vector) function faultrake2slick_vector(strike_rhr, dipangle, rake_aki) result(slick_vect)
 
         ! QUATf_faultpole2faultvector
 
@@ -50,11 +49,9 @@ contains
         slick_vect%y = cos(d2r*rake_aki)*sin(d2r*strike_rhr)-sin(d2r*rake_aki)*cos(d2r*dipangle)*cos(d2r*strike_rhr)
         slick_vect%z = -sin(d2r*rake_aki)*sin(d2r*dipangle)
 
-
     end function faultrake2slick_vector
 
     !--------------------------
-
 
     !--------------------------
     ! converts from slickenline (vector) to rake
@@ -84,7 +81,6 @@ contains
 
     !--------------------------
 
-
     !--------------------------
     ! calculates T-P-B components from fault normal and slickenline vectors
 
@@ -103,7 +99,6 @@ contains
         TPB_vectors1%Y = vector_normalization(TPB_vectors1%Y)
 
         TPB_vectors1%Z = vector_vectprod(TPB_vectors1%X,TPB_vectors1%Y)
-
 
 
     end function TPBvectors_calc1

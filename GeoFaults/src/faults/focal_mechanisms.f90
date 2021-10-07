@@ -2,9 +2,7 @@ module focal_mechanisms
 
     implicit none
 
-
     contains
-
 
         !------------------------
         ! calculates the focal mechanisms vectors from a strike-dip-rake input
@@ -17,7 +15,6 @@ module focal_mechanisms
 
             faultplane1%strike_rhr = strike_rhr1
             faultplane1%dipangle = dipangle1
-
 
             faultnormal_vect1 = plane_normal(faultplane1)
             slickenline_vect1 = faultrake2slick_vector(strike_rhr1, dipangle1, rake_aki1)

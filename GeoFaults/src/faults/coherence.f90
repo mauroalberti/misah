@@ -2,11 +2,7 @@ module coherence
 
     implicit none
 
-
     contains
-
-
-
 
         !------------------------
         ! calculates coherence between fault/focal mechanism pairs
@@ -15,15 +11,13 @@ module coherence
 
             !  formulas taken from: Kagan & Knopoff, 1985a,b
 
-            real(kind=r8b), dimension(3,3) :: mom_tens1,mom_tens2
+            real(kind=r8b), dimension(3,3) :: mom_tens1, mom_tens2
 
-            coherence = sum(mom_tens1*mom_tens2)
-
+            coherence = sum(mom_tens1 * mom_tens2)
 
         end function coherence_solution
 
         !------------------------
-
 
         !------------------------
         ! sorting of rotation solutions based on the magnitudes of the rotation angles
@@ -34,7 +28,6 @@ module coherence
             type(rotation) :: sortedrotationsolution(4)
 
             integer (kind=i1b):: i, sortindex(4), sortndx(1)
-
 
             real (kind=r8b) :: absrotang(4)
 
@@ -59,7 +52,6 @@ module coherence
         end function sortrotationsolutions
 
         !------------------------
-
 
 
 end module coherence

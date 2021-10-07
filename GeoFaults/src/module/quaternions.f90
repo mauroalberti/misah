@@ -1,28 +1,30 @@
 module quaternions
 
+    use iso_c_binding
+
     implicit none
 
-    type :: quaternion
-        real(kind=r8b) :: q(0:3) ! quaternion components, the last is the rotation component
+    type, bind(c) :: quaternion
+        real(c_double) :: q(0:3) ! quaternion components, the last is the rotation component
     end type quaternion
 
-    logical :: quat_is_normalized
-    real (kind=r8b) :: quat_sqnorm, quat_norm
-    real (kind=r8b),parameter :: quat_normaliz_tolerance = 1.0e-6
-
-    real (kind=r8b) :: focmec1_matrix(3,3)
+    logical(c_bool) :: quat_is_normalized
+    real (c_double) :: quat_sqnorm, quat_norm
+    real (c_double),parameter :: quat_normaliz_tolerance = 1.0e-6
+    
+    real (c_double) :: focmec1_matrix(3,3)
 
 contains
 
     !--------------------------
 
-    type(quaternion) function quat_product(quat1,quat2) result(quat_prod)
+    type(quaternion) function quat_product(quat1, quat2) result(quat_prod)
 
         ! QUATq_product
         ! quaternion product
         ! Avenue created: 2005-02-11
 
-        type(quaternion) :: quat1,quat2
+        type(quaternion) :: quat1, quat2
 
 
         quat_prod%q(0) =  (quat1%q(0)*quat2%q(0))   &
@@ -69,7 +71,7 @@ contains
 
     !--------------------------
 
-    real (kind=r8b) function quat_squarednorm(quat1)
+    real (c_double) function quat_squarednorm(quat1)
 
         !  QUATq_squarednorm
         !  created 2005-02-12
@@ -90,9 +92,9 @@ contains
         ! quaternion division by a scalar
         ! created: 2005-02-12
 
-        integer (kind=i1b) :: i
+        integer (c_int) :: i
         type(quaternion), intent(in) :: quat1
-        real (kind=r8b), intent(in) :: scaldiv
+        real (c_double), intent(in) :: scaldiv
 
         do i=0,3
             quat_scaldiv%q(i) = quat1%q(i)/scaldiv
@@ -126,7 +128,7 @@ contains
         ! QUATq_normalizedquaterniontest
         ! created 2005-02-12
 
-        real (kind=r8b) :: abs_diff
+        real (c_double) :: abs_diff
         type(quaternion) :: quat1
 
         quat_sqnorm = quat_squarednorm(quat1)
@@ -175,9 +177,9 @@ contains
         ! QUATq_TPBcartesmatrix2quaternion
         ! modified 2005-02-17
 
-        real (kind=r8b) :: focmec1_matrix(3,3)
-        real (kind=r8b) :: Q0, Q1, Q2, Q3
-        real (kind=r8b) :: Q0Q1,Q0Q2,Q0Q3,Q1Q2,Q1Q3,Q2Q3
+        real (c_double) :: focmec1_matrix(3,3)
+        real (c_double) :: Q0, Q1, Q2, Q3
+        real (c_double) :: Q0Q1,Q0Q2,Q0Q3,Q1Q2,Q1Q3,Q2Q3
 
         ! myR11 = t1 = focmec1_matrix(1,1)
         ! myR21 = t2 = focmec1_matrix(2,1)
@@ -189,7 +191,7 @@ contains
         ! myR23 = b2 = focmec1_matrix(2,3)
         ! myR33 = b3 = focmec1_matrix(3,3)
 
-        Q0 = 0.5*(dsqrt(1+focmec1_matrix(1,1)+focmec1_matrix(2,2)+focmec1_matrix(3,3)))
+        Q0 = 0.5*(dsqrt(1.0 + focmec1_matrix(1,1) + focmec1_matrix(2,2) + focmec1_matrix(3,3)))
         Q1 = 0.5*(dsqrt(1+focmec1_matrix(1,1)-focmec1_matrix(2,2)-focmec1_matrix(3,3)))
         Q2 = 0.5*(dsqrt(1-focmec1_matrix(1,1)+focmec1_matrix(2,2)-focmec1_matrix(3,3)))
         Q3 = 0.5*(dsqrt(1-focmec1_matrix(1,1)-focmec1_matrix(2,2)+focmec1_matrix(3,3)))
