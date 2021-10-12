@@ -8,210 +8,188 @@ module quaternions
         real(c_double) :: q(0:3) ! quaternion components, the last is the rotation component
     end type quaternion
 
-    logical(c_bool) :: quat_is_normalized
-    real (c_double) :: quat_sqnorm, quat_norm
-    real (c_double),parameter :: quat_normaliz_tolerance = 1.0e-6
-    
-    real (c_double) :: focmec1_matrix(3,3)
+    real (c_double), parameter :: quat_normaliz_tolerance = 1.0e-6
 
 contains
 
     !--------------------------
 
-    type(quaternion) function quat_product(quat1, quat2) result(quat_prod)
+    subroutine quat_product(quat1, quat2, product)
 
         ! QUATq_product
         ! quaternion product
         ! Avenue created: 2005-02-11
 
-        type(quaternion) :: quat1, quat2
+        type(quaternion) :: quat1, quat2, product
 
 
-        quat_prod%q(0) =  (quat1%q(0)*quat2%q(0))   &
-                -(quat1%q(1)*quat2%q(1))	&
-                -(quat1%q(2)*quat2%q(2))	&
-                -(quat1%q(3)*quat2%q(3))
+        product%q(0) = (quat1%q(0)*quat2%q(0))   &
+                  -(quat1%q(1)*quat2%q(1))	&
+                  -(quat1%q(2)*quat2%q(2))	&
+                  -(quat1%q(3)*quat2%q(3))
 
-        quat_prod%q(1) =  (quat1%q(0)*quat2%q(1))	&
-                +(quat1%q(1)*quat2%q(0))	&
-                +(quat1%q(2)*quat2%q(3))	&
-                -(quat1%q(3)*quat2%q(2))
+        product%q(1) = (quat1%q(0)*quat2%q(1))	&
+                  +(quat1%q(1)*quat2%q(0))	&
+                  +(quat1%q(2)*quat2%q(3))	&
+                  -(quat1%q(3)*quat2%q(2))
 
-        quat_prod%q(2) =  (quat1%q(0)*quat2%q(2))	&
-                -(quat1%q(1)*quat2%q(3))	&
-                +(quat1%q(2)*quat2%q(0))	&
-                +(quat1%q(3)*quat2%q(1))
+        product%q(2) = (quat1%q(0)*quat2%q(2))	&
+                  -(quat1%q(1)*quat2%q(3))	&
+                  +(quat1%q(2)*quat2%q(0))	&
+                  +(quat1%q(3)*quat2%q(1))
 
-        quat_prod%q(3) =  (quat1%q(0)*quat2%q(3))	&
-                +(quat1%q(1)*quat2%q(2))	&
-                -(quat1%q(2)*quat2%q(1))	&
-                +(quat1%q(3)*quat2%q(0))
+        product%q(3) = (quat1%q(0)*quat2%q(3))	&
+                  +(quat1%q(1)*quat2%q(2))	&
+                  -(quat1%q(2)*quat2%q(1))	&
+                  +(quat1%q(3)*quat2%q(0))
 
-    end function quat_product
-
-    !--------------------------
+    end subroutine quat_product
 
     !--------------------------
 
-    type(quaternion) function quat_conjugate(quat1) result(quat_conj)
+    subroutine quat_conjugate(quat, conjugate)
 
         ! QUATq_conjugate
         ! created 2005-02-10
 
-        type(quaternion) :: quat1
+        type(quaternion) :: quat, conjugate
 
-        quat_conj%q(0) =   quat1%q(0)
-        quat_conj%q(1) = - quat1%q(1)
-        quat_conj%q(2) = - quat1%q(2)
-        quat_conj%q(3) = - quat1%q(3)
+        conjugate%q(0) =   quat%q(0)
+        conjugate%q(1) = - quat%q(1)
+        conjugate%q(2) = - quat%q(2)
+        conjugate%q(3) = - quat%q(3)
 
-    end function quat_conjugate
-
-    !--------------------------
+    end subroutine quat_conjugate
 
     !--------------------------
 
-    real (c_double) function quat_squarednorm(quat1)
+    subroutine quat_squarednorm(quat, squarednorm)
 
         !  QUATq_squarednorm
         !  created 2005-02-12
 
-        type(quaternion) :: quat1
+        type(quaternion) :: quat
+        real (c_double) :: squarednorm
 
-        quat_squarednorm = (quat1%q(0)**2)+(quat1%q(1)**2)+(quat1%q(2)**2)+(quat1%q(3)**2)
+        squarednorm = (quat%q(0) ** 2) + (quat%q(1) ** 2) + (quat%q(2) ** 2) + (quat%q(3) ** 2)
 
-    end function quat_squarednorm
+    end subroutine quat_squarednorm
 
     !--------------------------
 
-    !--------------------------
-
-    type(quaternion) function quat_scalardivision(quat1, scaldiv) result(quat_scaldiv)
+    subroutine quat_scalardivision(quat, scaldiv, quat_scaldiv)
 
         ! QUATq_divisionbyscalar
         ! quaternion division by a scalar
         ! created: 2005-02-12
 
         integer (c_int) :: i
-        type(quaternion), intent(in) :: quat1
+        type(quaternion), intent(in) :: quat, quat_scaldiv
         real (c_double), intent(in) :: scaldiv
 
         do i=0,3
-            quat_scaldiv%q(i) = quat1%q(i)/scaldiv
+            quat_scaldiv%q(i) = quat%q(i) / scaldiv
         end do
 
-    end function quat_scalardivision
+    end subroutine quat_scalardivision
 
     !--------------------------
 
-    !--------------------------
-
-    type(quaternion) function quat_inverse(quat1) result(quat_inv)
+    subroutine quat_inverse(quat, inverse)
 
         !  quaternion inverse
         !  created: 2005-02-19
 
-        type(quaternion) :: quat1, quat_conj
+        type(quaternion) :: quat, inverse
+        real (c_double) :: squarednorm
 
-        quat_conj = quat_conjugate(quat1)
-        quat_sqnorm = quat_squarednorm(quat1)
-        quat_inv = quat_scalardivision(quat_conj, quat_sqnorm)
+        squarednorm = quat_squarednorm(quat_conjugate(quat))
+        inverse = quat_scalardivision(quat_conj, squarednorm)
 
-    end function quat_inverse
-
-    !--------------------------
+    end subroutine quat_inverse
 
     !--------------------------
 
-    logical function quat_normaliztest(quat1) result(quat_is_normalized)
+    subroutine is_quat_normalized(quat, is_normalized)
 
         ! QUATq_normalizedquaterniontest
         ! created 2005-02-12
 
-        real (c_double) :: abs_diff
-        type(quaternion) :: quat1
+        real (c_double) :: squarednorm, abs_diff
+        type(quaternion) :: quat
+        logical(c_bool) :: is_normalized
 
-        quat_sqnorm = quat_squarednorm(quat1)
-        abs_diff = dabs(1-quat_sqnorm)
+        squarednorm = quat_squarednorm(quat)
+        abs_diff = dabs(1 - squarednorm)
 
         if (abs_diff > quat_normaliz_tolerance) then
-            quat_is_normalized = .false.
+            is_normalized = .false.
         else
-            quat_is_normalized = .true.
+            is_normalized = .true.
         endif
 
-    end function quat_normaliztest
+    end subroutine is_quat_normalized
 
     !--------------------------
 
-    !--------------------------
-
-    type(quaternion) function quat_normalization(quat1) result(quat_normalized)
+    subroutine quat_normalization(quat, normalized)
 
         !  QUATq_normalization
         !  transformation from quaternion to normalized quaternion
         !  created: 2005-02-14
 
-        type(quaternion) :: quat1
+        type(quaternion) :: quat, normalized
+        real (c_double) :: norm
 
-        quat_sqnorm = quat_squarednorm(quat1)
-        quat_norm = dsqrt(quat_sqnorm)
-        quat_normalized = quat_scalardivision(quat1, quat_norm)
+        norm = dsqrt(quat_squarednorm(quat))
+        normalized = quat_scalardivision(quat, norm)
 
-        quat_is_normalized = quat_normaliztest(quat_normalized)
-        if (.not.quat_is_normalized) then
-            write(*,*) 'Error in quaternion normalization. Hit any key to stop'
-            read(*,*)
-            stop
-        endif
-
-    end function quat_normalization
-
-    !--------------------------
+    end subroutine quat_normalization
 
     !--------------------------
     ! calculates a quaternion from a 3x3 matrix
 
-    type(quaternion) function quaternfromcartmatr(focmec1_matrix) result(quat1)
+    subroutine quaternfromcartmatr(focmec_matrix, quat)
 
         ! QUATq_TPBcartesmatrix2quaternion
         ! modified 2005-02-17
 
-        real (c_double) :: focmec1_matrix(3,3)
+        real (c_double) :: focmec_matrix(3, 3)
         real (c_double) :: Q0, Q1, Q2, Q3
-        real (c_double) :: Q0Q1,Q0Q2,Q0Q3,Q1Q2,Q1Q3,Q2Q3
+        real (c_double) :: Q0Q1, Q0Q2, Q0Q3, Q1Q2, Q1Q3, Q2Q3
+        type(quaternion) :: quat
 
-        ! myR11 = t1 = focmec1_matrix(1,1)
-        ! myR21 = t2 = focmec1_matrix(2,1)
-        ! myR31 = t3 = focmec1_matrix(3,1)
-        ! myR12 = p1 = focmec1_matrix(1,2)
-        ! myR22 = p2 = focmec1_matrix(2,2)
-        ! myR32 = p3 = focmec1_matrix(3,2)
-        ! myR13 = b1 = focmec1_matrix(1,3)
-        ! myR23 = b2 = focmec1_matrix(2,3)
-        ! myR33 = b3 = focmec1_matrix(3,3)
+        ! myR11 = t1 = focmec_matrix(1,1)
+        ! myR21 = t2 = focmec_matrix(2,1)
+        ! myR31 = t3 = focmec_matrix(3,1)
+        ! myR12 = p1 = focmec_matrix(1,2)
+        ! myR22 = p2 = focmec_matrix(2,2)
+        ! myR32 = p3 = focmec_matrix(3,2)
+        ! myR13 = b1 = focmec_matrix(1,3)
+        ! myR23 = b2 = focmec_matrix(2,3)
+        ! myR33 = b3 = focmec_matrix(3,3)
 
-        Q0 = 0.5*(dsqrt(1.0 + focmec1_matrix(1,1) + focmec1_matrix(2,2) + focmec1_matrix(3,3)))
-        Q1 = 0.5*(dsqrt(1+focmec1_matrix(1,1)-focmec1_matrix(2,2)-focmec1_matrix(3,3)))
-        Q2 = 0.5*(dsqrt(1-focmec1_matrix(1,1)+focmec1_matrix(2,2)-focmec1_matrix(3,3)))
-        Q3 = 0.5*(dsqrt(1-focmec1_matrix(1,1)-focmec1_matrix(2,2)+focmec1_matrix(3,3)))
+        Q0 = 0.5*(dsqrt(1.0 + focmec_matrix(1, 1) + focmec_matrix(2, 2) + focmec_matrix(3, 3)))
+        Q1 = 0.5*(dsqrt(1.0 + focmec_matrix(1, 1) - focmec_matrix(2, 2) - focmec_matrix(3, 3)))
+        Q2 = 0.5*(dsqrt(1.0 - focmec_matrix(1, 1) + focmec_matrix(2, 2) - focmec_matrix(3, 3)))
+        Q3 = 0.5*(dsqrt(1.0 - focmec_matrix(1, 1) - focmec_matrix(2, 2) + focmec_matrix(3, 3)))
 
-        Q0Q1 = 0.25*(focmec1_matrix(3,2) - focmec1_matrix(2,3))
-        Q0Q2 = 0.25*(focmec1_matrix(1,3) - focmec1_matrix(3,1))
-        Q0Q3 = 0.25*(focmec1_matrix(2,1) - focmec1_matrix(1,2))
-        Q1Q2 = 0.25*(focmec1_matrix(1,2) + focmec1_matrix(2,1))
-        Q1Q3 = 0.25*(focmec1_matrix(1,3) + focmec1_matrix(3,1))
-        Q2Q3 = 0.25*(focmec1_matrix(2,3) + focmec1_matrix(3,2))
+        Q0Q1 = 0.25*(focmec_matrix(3, 2) - focmec_matrix(2, 3))
+        Q0Q2 = 0.25*(focmec_matrix(1, 3) - focmec_matrix(3, 1))
+        Q0Q3 = 0.25*(focmec_matrix(2, 1) - focmec_matrix(1, 2))
+        Q1Q2 = 0.25*(focmec_matrix(1, 2) + focmec_matrix(2, 1))
+        Q1Q3 = 0.25*(focmec_matrix(1, 3) + focmec_matrix(3, 1))
+        Q2Q3 = 0.25*(focmec_matrix(2, 3) + focmec_matrix(3, 2))
 
-        if((3*Q0)>(Q1+Q2+Q3)) then
+        if((3 * Q0) > (Q1 + Q2 + Q3)) then
             Q1 = Q0Q1/Q0
             Q2 = Q0Q2/Q0
             Q3 = Q0Q3/Q0
-        elseif ((3*Q1)>(Q0+Q2+Q3)) then
+        elseif ((3*Q1) > (Q0 + Q2 + Q3)) then
             Q0 = Q0Q1/Q1
             Q2 = Q1Q2/Q1
             Q3 = Q1Q3/Q1
-        elseif ((3*Q2)>(Q0+Q1+Q3)) then
+        elseif ((3*Q2) > (Q0 + Q1 + Q3)) then
             Q0 = Q0Q2/Q2
             Q1 = Q1Q2/Q2
             Q3 = Q2Q3/Q2
@@ -221,12 +199,12 @@ contains
             Q2 = Q2Q3/Q3
         end if
 
-        quat1%q(0)= Q0
-        quat1%q(1)= Q1
-        quat1%q(2)= Q2
-        quat1%q(3)= Q3
+        quat%q(0)= Q0
+        quat%q(1)= Q1
+        quat%q(2)= Q2
+        quat%q(3)= Q3
 
-    end function quaternfromcartmatr
+    end subroutine quaternfromcartmatr
 
     !--------------------------
 
