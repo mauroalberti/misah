@@ -1,0 +1,21 @@
+[package]
+name = "misahpy"
+version = "0.2.0-alpha.0"
+authors = ["mauroalberti <alberti.m65@gmail.com>"]
+keywords = ["earth-sciences", "structural-geology"]
+categories = ["science"]
+edition = "2018"
+repository = "https://gitlab.com/mauroalberti/misah"
+
+[dependencies]
+misah = { path = "../lib/" }
+ndarray = "0.15.1"
+
+[dependecies.pyo3]
+version = "0.8.0"
+features = ["extension-module"]
+
+[lib]
+name = "misahpy"
+path = "src/lib.rs"
+crate-type = ["cdylib"]

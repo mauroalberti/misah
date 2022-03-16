@@ -1,0 +1,22 @@
+[package]
+name = "misah"
+version = "0.2.0"
+authors = ["mauroalberti <alberti.m65@gmail.com>"]
+description = "A crate for structural geology processings."
+license = "GPL3"
+readme = "../README.md"
+repository = "https://gitlab.com/mauroalberti/misah"
+exclude = [
+    "test.*",
+    "examples/*.svg"
+]
+keywords = ["earth-sciences", "structural-geology"]
+categories = ["science"]
+edition = "2018"
+
+[dependencies]
+ndarray = "0.15.1"
+
+[lib]
+name = "misah"
+path = "src/lib.rs"
