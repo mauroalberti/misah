@@ -1,5 +1,5 @@
 
-use super::point3d::{Point3D};
+use super::points::{Point3D};
 
 pub struct Segment3D {
     pub start_pt: Point3D,

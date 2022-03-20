@@ -10,10 +10,7 @@ repository = "https://gitlab.com/mauroalberti/misah"
 [dependencies]
 misah = { path = "../lib/" }
 ndarray = "0.15.1"
-
-[dependecies.pyo3]
-version = "0.8.0"
-features = ["extension-module"]
+pyo3 = { version = "0.13.2", features = ["extension-module"] }
 
 [lib]
 name = "misahpy"
