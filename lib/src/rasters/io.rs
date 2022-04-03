@@ -15,78 +15,46 @@ use std::path::Path;
 
 
 pub fn read_ascii_dem(
-    path_str: &string,
+    file_path: &string,
     epsg_code: i32
-) -> Result<GeoArray, Error> {
-
-    // Create a path to the desired file
-    let path = Path::new(path_str);
+) -> Result<Grid, Error> {
 
     // Open the path in read-only mode
 
-    let file = match File::open(&path) {
-        Err(err) => return Err,
-        Ok(file) => file,
-    };
-
-    let mut lines = BufReader::new(&file).lines();
-
-    /*
-    NCOLS 525
-    NROWS 544
-    XLLCORNER 317567.8563212453
-    YLLCORNER 4730903.4029195514
-    CELLSIZE 28.030813
-    NODATA_VALUE 170141000918782800000000000000000000000.0000
-     */
+    let file = File::open(&file_path)?;
+    let lines = BufReader::new(&file).lines();
 
     // ncols
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    let mut line = lines.next()?;
     let ncols = line.split_whitespace().nth(1).unwrap().parse::<i32>().unwrap();
     println!("ncols: {}", ncols);
 
     // nrows
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    line = lines.next()?;
     let nrows = line.split_whitespace().nth(1).unwrap().parse::<i32>().unwrap();
     println!("nrows: {}", nrows);
 
     // xllcorner
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    line = lines.next()?;
     let xllcorner = line.split_whitespace().nth(1).unwrap().parse::<f32>().unwrap();
     println!("xllcorner: {}", xllcorner);
 
     // yllcorner
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    line = lines.next()?;
     let yllcorner = line.split_whitespace().nth(1).unwrap().parse::<f32>().unwrap();
     println!("yllcorner: {}", yllcorner);
 
     // cellsize
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    line = lines.next()?;
     let cellsize = line.split_whitespace().nth(1).unwrap().parse::<f32>().unwrap();
     println!("cellsize: {}", cellsize);
 
     // nodata_value
-    let line = match lines.next().unwrap() {
-        Err(err) => return Err,
-        Ok(line) => line,
-    };
+    line = lines.next()?;
     let nodata_value = line.split_whitespace().nth(1).unwrap().parse::<f32>().unwrap();
     println!("nodata_value: {}", nodata_value);
 
+    while let line = lines.next() {
 
+    };
 }

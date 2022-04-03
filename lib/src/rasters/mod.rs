@@ -1,4 +1,4 @@
 
-pub mod geoarray;
+pub mod grid;
 pub mod geotransform;
 
