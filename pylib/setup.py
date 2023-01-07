@@ -38,17 +38,7 @@ setup(
     author=package_meta['authors'][0],
     rust_extensions=[
         RustExtension(
-            'misah.geometry',
-            'Cargo.toml',
-            binding=Binding.PyO3,
-            strip=Strip.Debug),
-        RustExtension(
-             'misah.georeferencedy',
-            'Cargo.toml',
-            binding=Binding.PyO3,
-            strip=Strip.Debug),
-        RustExtension(
-             'misah.orientations',
+            'misah.features',
             'Cargo.toml',
             binding=Binding.PyO3,
             strip=Strip.Debug),
