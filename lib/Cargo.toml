@@ -16,6 +16,7 @@ edition = "2018"
 
 [dependencies]
 ndarray = "0.15.4"
+nalgebra = "0.32"
 
 [lib]
 name = "misah"
