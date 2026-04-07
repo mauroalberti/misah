@@ -2,7 +2,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum GxsurfError {
+pub enum GeoProfileError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
@@ -12,8 +12,8 @@ pub enum GxsurfError {
     #[error("missing column '{column}' in table '{table}'")]
     MissingColumn { table: String, column: String, },
 
-    #[error("invalid value: {0}")]
-    InvalidValue(String),
+    #[error("invalid data: {0}")]
+    InvalidData(String),
 
     #[error("schema mismatch: {0}")]
     SchemaMismatch(String),

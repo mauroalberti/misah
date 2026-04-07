@@ -2,10 +2,11 @@
 pub mod features;
 pub mod rasters;
 pub mod orientations;
+pub mod geoprofile;
 
 pub mod api;
 pub mod error;
-pub mod profiles;
+
 pub mod sqlite;
 
 pub use api::read::{read_all, GeoprofileDataset};
