@@ -218,7 +218,7 @@ impl SqliteGeoProfileReader {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            Ok(Attitude {
+            Ok(ProjectedAttitudeRecord {
                 rec_id: row.get(0)?,
                 profile_id: row.get(1)?,
                 label: row.get(2)?,
@@ -237,11 +237,9 @@ impl SqliteGeoProfileReader {
             })
         })?;
 
-        row.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 
     }
-
-    pub fn read_plane_traces(&self) -> Result<Vec<PlaneTrace>, GeoProfileError>;
 
     pub fn read_line_intersections(&self) -> Result<Vec<LineIntersectionRecord>, GeoProfileError> {
 
@@ -347,7 +345,7 @@ impl SqliteGeoProfileReader {
 
     }
 
-    pub fn read_all(path: impl AsRef<Path>) -> Result<GeoProfileDataset, GeoProfileError> {
+    pub fn read_all(&self) -> Result<GeoProfileDataset, GeoProfileError> {
 
         Ok(GeoProfileDataset {
             result_sets: self.read_result_sets()?,
@@ -363,11 +361,3 @@ impl SqliteGeoProfileReader {
 
 }
 
-
-
-
-
-        })
-    }
-
-}

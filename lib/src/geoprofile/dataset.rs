@@ -8,7 +8,7 @@ use crate::geoprofile::records::{
     projected_point::ProjectedPointRecord,
     result_set::ResultSetRecord,
     source::SourceRecord,
-}
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct GeoProfileDataset {

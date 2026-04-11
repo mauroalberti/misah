@@ -9,7 +9,7 @@ pub struct ProjectedAttitudeRecord {
     pub z: f64,
     pub slope_degr: f64,
     pub down_sense: String,
-    pub src_dip_dir: f64>,
+    pub src_dip_dir: f64,
     pub src_dip_ang: f64,
     pub dist_to_profile: Option<f64>,
     pub src_x: Option<f64>,

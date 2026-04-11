@@ -47,7 +47,7 @@ pub fn require_columns(
     for required in required_columns {
         if !cols.iter().any(|c| c == required) {
             return Err(GeoProfileError::MissingColumn {
-                table: table_name-to_string(),
+                table: table_name.to_string(),
                 column: (*required).to_string(),
             });
         }
