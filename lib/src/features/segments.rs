@@ -1,18 +1,21 @@
 
-use super::points::{Point3D};
+use super::points::Point;
 
-pub struct Segment3D {
-    pub start_pt: Point3D,
-    pub end_pt: Point3D,
+pub struct Segment<const N: usize> {
+    pub start_pt: Point<N>,
+    pub end_pt: Point<N>,
 }
 
-impl Segment3D {
+pub type Segment2D = Segment<2>;
+pub type Segment3D = Segment<3>;
 
-    fn new(start_pt: Point3D, end_pt: Point3D) -> Self {
-        Segment3D { start_pt, end_pt }
+impl<const N: usize> Segment<N> {
+
+    pub fn new(start_pt: Point<N>, end_pt: Point<N>) -> Self {
+        Self { start_pt, end_pt }
     }
 
     pub fn length(&self) -> f64 {
-        Point3D::distance(&self.start_pt, &self.end_pt)
+        self.start_pt.distance(&self.end_pt)
     }
 }

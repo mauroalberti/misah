@@ -1,31 +1,51 @@
 
-pub struct Point3D {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Point<const N: usize> {
+    pub coords: [f64; N],
 }
 
-impl Point3D {
+pub type Point2D = Point<2>;
+pub type Point3D = Point<3>;
 
-    fn new(x: f64, y: f64, z: f64) -> Self {
-        Point3D { x, y, z}
+// conversione idiomatica
+impl<const N: usize> From<[f64; N]> for Point<N> {
+    fn from(coords: [f64; N]) -> Self {
+        Self { coords }
     }
+}
 
-    pub fn delta_x(&self, other: &Self) -> f64 {
-        other.x - self.x
-    }
-
-    pub fn delta_y(&self, other: &Self) -> f64 {
-        other.y - self.y
-    }
-
-    pub fn delta_z(&self, other: &Self) -> f64 {
-        other.z - self.z
+impl<const N: usize> Point<N> {
+    pub fn coord(&self, i: usize) -> Option<f64> {
+        self.coords.get(i).copied()
     }
 
     pub fn distance(&self, other: &Self) -> f64 {
-        (self.delta_x(other) * self.delta_x(other) + self.delta_y(other) * self.delta_y(other) + self.delta_z(other) * self.delta_z(other)).sqrt()
+        self.coords
+            .iter()
+            .zip(other.coords.iter())
+            .map(|(a, b)| {
+                let d = b - a;
+                d*d
+            })
+            .sum::<f64>()
+            .sqrt()
     }
-
-
 }
+
+impl Point<1> {
+    pub fn x(&self) -> f64 { self.coords[0] }
+}
+
+impl Point<2> {
+    pub fn x(&self) -> f64 { self.coords[0] }
+    pub fn y(&self) -> f64 { self.coords[1] }
+}
+
+impl Point<3> {
+    pub fn x(&self) -> f64 { self.coords[0] }
+    pub fn y(&self) -> f64 { self.coords[1] }
+    pub fn z(&self) -> f64 { self.coords[2] }
+}
+
+
+
