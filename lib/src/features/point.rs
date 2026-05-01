@@ -9,12 +9,15 @@ pub type Point3D = Point<3>;
 
 // conversione idiomatica
 impl<const N: usize> From<[f64; N]> for Point<N> {
+
     fn from(coords: [f64; N]) -> Self {
         Self { coords }
     }
+
 }
 
 impl<const N: usize> Point<N> {
+
     pub fn coord(&self, i: usize) -> Option<f64> {
         self.coords.get(i).copied()
     }

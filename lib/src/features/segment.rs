@@ -1,6 +1,7 @@
 
 use super::points::Point;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Segment<const N: usize> {
     pub start_pt: Point<N>,
     pub end_pt: Point<N>,

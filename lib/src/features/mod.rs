@@ -1,3 +1,4 @@
 
-pub mod points;
-pub mod segments;
+pub mod point;
+pub mod segment;
+pub mod linestring;

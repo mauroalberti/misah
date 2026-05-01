@@ -1,7 +1,7 @@
 
 use super::axis::{Axis};
 
-pub struct GeolPlane {
+pub struct GeologicalPlane {
     pub azimuth: f64,
     pub dip_angle: f64
 }
