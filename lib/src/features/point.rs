@@ -7,7 +7,7 @@ pub struct Point<const N: usize> {
 pub type Point2D = Point<2>;
 pub type Point3D = Point<3>;
 
-// conversione idiomatica
+// conversione
 impl<const N: usize> From<[f64; N]> for Point<N> {
 
     fn from(coords: [f64; N]) -> Self {

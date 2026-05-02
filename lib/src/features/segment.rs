@@ -1,5 +1,5 @@
 
-use super::points::Point;
+use super::point::Point;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Segment<const N: usize> {

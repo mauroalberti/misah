@@ -1,6 +1,7 @@
 
-use super::points::Point;
-user super::segments::Segment;
+use super::point::Point;
+use super::segment::Segment;
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Linestring<const N: usize> {
