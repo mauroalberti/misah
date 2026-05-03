@@ -1,4 +1,6 @@
 
+use std::ops::Neg;
+
 use super::{Vector, VectorError};
 
 // Unit vector
@@ -26,6 +28,10 @@ impl<const N: usize> Versor<N> {
             coords: self.coords.map(|c| -c),
         }
     }
+
+    pub fn dot(&self, other: &Self) -> f64 {
+        self.as_vector().dot(&other.as_vector())
+    }
 }
 
 impl<const N: usize> TryFrom<Vector<N>> for Versor<N> {
@@ -43,5 +49,14 @@ impl<const N: usize> TryFrom<Vector<N>> for Versor<N> {
             coords: v.coords.map(|c| c / norm),
         })
 
+    }
+}
+
+impl<const N: usize> Neg for Versor<N> {
+
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        self.opposite()
     }
 }
