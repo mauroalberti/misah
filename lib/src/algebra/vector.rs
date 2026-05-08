@@ -6,6 +6,9 @@ pub struct Vector<const N: usize> {
     pub coords: [f64; N],
 }
 
+pub type Vector2D = Vector<2>;
+pub type Vector3D = Vector<3>;
+
 impl<const N: usize> Vector<N> {
 
     pub fn new(coords: [f64; N]) -> Self {
@@ -18,6 +21,19 @@ impl<const N: usize> Vector<N> {
             .map(|c| c*c)
             .sum::<f64>()
             .sqrt()
+    }
+
+    pub fn normalize(&self) -> Option<Self> {
+
+        let n = self.norm();
+
+        if n == 0.0 {
+            return None;
+        }
+
+        let coords = self.coords.map(|v| v / n);
+        Some(Self {coords })
+
     }
 
     pub fn dot(&self, other: &Self) -> f64 {
@@ -34,6 +50,12 @@ impl<const N: usize> Vector<N> {
             .all(|c| *c == 0.0)
     }
 
+}
+
+impl<const N: usize> From<[f64; N]> for Vector<N> {
+    fn from(coords: [f64; N]) -> Self {
+        Self::new(coords)
+    }
 }
 
 impl<const N: usize> Neg for Vector<N> {
@@ -98,6 +120,25 @@ impl<const N: usize> Sub for Vector<N> {
         }
 
         Self { coords }
+    }
+}
+
+impl Vector<3> {
+
+    pub fn cross(&self, other: &Self) -> Self {
+
+        let [a1, a2, a3] = self.coords;
+        let [b1, b2, b3] = other.coords;
+
+        Self {
+            coords: [
+              a2 * b3 - a3 * b2,
+              a3 * b1 - a1 * b3,
+              a1 * b2 - a2 * b1,
+            ],
+        }
+
+
     }
 }
 

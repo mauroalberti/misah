@@ -9,6 +9,9 @@ pub struct Versor<const N: usize> {
     coords: [f64, N],
 }
 
+pub type Versor2D = Versor<2>;
+pub type Versor3D = Versor<3>;
+
 impl<const N: usize> Versor<N> {
 
     pub fn new(coords: [f64; N]) -> Result<Self, VectorError> {

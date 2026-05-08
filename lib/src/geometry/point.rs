@@ -1,4 +1,6 @@
 
+use super::math::Vector
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point<const N: usize> {
     pub coords: [f64; N],
@@ -32,6 +34,17 @@ impl<const N: usize> Point<N> {
             })
             .sum::<f64>()
             .sqrt()
+    }
+
+    pub fn vector_to(&self, other: &Self) -> Vector<N> {
+
+        let mut coords = [0.0; N];
+
+        for i in 0..N {
+            coords[i] = other.coords[i] - self.coords[i];
+        }
+
+        Vector { coords }
     }
 }
 

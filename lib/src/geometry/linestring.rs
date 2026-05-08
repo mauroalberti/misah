@@ -12,6 +12,7 @@ pub type Linestring2D = Linestring<2>;
 pub type Linestring3D = Linestring<3>;
 
 impl<const N: usize> Linestring<N> {
+
     pub fn from_points(points: Vec<Point<N>>) -> Self {
         Self { points }
     }
@@ -28,10 +29,15 @@ impl<const N: usize> Linestring<N> {
         self.points.len().saturating_sub(1)
     }
 
-    pub fn length(&self) -> f64 {
+    pub fn segments(&self) -> impl Iterator<Item = (&Point<N>, &Point<N>)> {
         self.points
-            .windows(2)
-            .map(|pair| pair[0].distance(&pair[1]))
+        .windows(2)
+        .map(|w| (&w[0], &w[1]))
+    }
+
+    pub fn length(&self) -> f64 {
+        self.segments()
+            .map(|(p0, p1)| p0.distance(p1))
             .sum()
     }
 
@@ -52,5 +58,18 @@ impl<const N: usize> Linestring<N> {
 
     pub fn push(&mut self, point: Point<N>) {
         self.points.push(point);
+    }
+
+    pub fn is_closed(&self) -> bool {
+        match (self.first(), self.last()) {
+            (Some(first), Some(last)) => first == last,
+            _ => false,
+        }
+    }
+}
+
+impl<const N: usize> From<Vec<Point<N>>> for Line<N> {
+    fn from(points: Vec<Point<N>>) -> Self {
+        Self::new(points)
     }
 }
