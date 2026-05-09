@@ -13,8 +13,16 @@ pub type Linestring3D = Linestring<3>;
 
 impl<const N: usize> Linestring<N> {
 
+    pub fn new(points: Vec<Point<N>>) -> Self {
+        Self { points }
+    }
+
     pub fn from_points(points: Vec<Point<N>>) -> Self {
         Self { points }
+    }
+
+    pub fn empty() -> Self {
+        Self { points: Vec::new() }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -23,6 +31,16 @@ impl<const N: usize> Linestring<N> {
 
     pub fn num_points(&self) -> usize {
         self.points.len()
+    }
+
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn length(&self) -> f64 {
+        self.segments()
+            .map(|(p0, p1)| p0.distance(p1))
+            .sum()
     }
 
     pub fn num_segments(&self) -> usize {
@@ -35,17 +53,15 @@ impl<const N: usize> Linestring<N> {
         .map(|w| (&w[0], &w[1]))
     }
 
-    pub fn length(&self) -> f64 {
-        self.segments()
-            .map(|(p0, p1)| p0.distance(p1))
-            .sum()
-    }
-
     pub fn segment_lengths(&self) -> Vec<f64> {
         self.points
             .windows(2)
             .map(|pair| pair[0].distance(&pair[1]))
             .collect()
+    }
+
+    pub fn point(&self, i: usize) -> Option<&Point<N>> {
+        self.points.get(i)
     }
 
     pub fn first(&self) -> Option<&Point<N>> {

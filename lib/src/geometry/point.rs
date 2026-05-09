@@ -1,5 +1,5 @@
 
-use super::math::Vector
+use super::algebra::Vector
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point<const N: usize> {
