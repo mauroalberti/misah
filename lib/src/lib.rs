@@ -1,8 +1,10 @@
 
-pub mod features;
+pub mod algebra;
+pub mod geometry;
 pub mod geoprofile;
-pub mod orientations;
-pub mod rasters;
+pub mod orientation;
+pub mod raster;
+pub mod structural;
 
 
 

@@ -1,5 +1,5 @@
 
-use super::algebra::Vector
+use crate::algebra::Vector;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point<const N: usize> {

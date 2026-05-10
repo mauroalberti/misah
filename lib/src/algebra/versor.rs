@@ -1,12 +1,14 @@
 
+use std::convert::TryInto;
+use std::convert::TryFrom;
 use std::ops::Neg;
 
-use super::{Vector, VectorError};
+use super::{Vector, AlgebraError};
 
 // Unit vector
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Versor<const N: usize> {
-    coords: [f64, N],
+    coords: [f64; N],
 }
 
 pub type Versor2D = Versor<2>;
@@ -14,7 +16,7 @@ pub type Versor3D = Versor<3>;
 
 impl<const N: usize> Versor<N> {
 
-    pub fn new(coords: [f64; N]) -> Result<Self, VectorError> {
+    pub fn new(coords: [f64; N]) -> Result<Self, AlgebraError> {
         Vector::new(coords).try_into()
     }
 
@@ -39,18 +41,19 @@ impl<const N: usize> Versor<N> {
 
 impl<const N: usize> TryFrom<Vector<N>> for Versor<N> {
 
-    type Error = VectorError;
+    type Error = AlgebraError;
 
     fn try_from(v: Vector<N>) -> Result<Self, Self::Error> {
 
         let norm = v.norm();
+
         if norm == 0.0 {
-            return Err(VectorError::ZeroVector);
+            return Err(AlgebraError::ZeroVector);
         }
 
-        Ok(Self {
-            coords: v.coords.map(|c| c / norm),
-        })
+        let coords = v.coords.map(|c| c / norm);
+
+        Ok(Self { coords })
 
     }
 }

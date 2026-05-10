@@ -1,5 +1,5 @@
 
-use crate::math::{MathError, Vector, Versor};
+use crate::algebra::{AlgebraError, Vector, Versor};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Direction<const N: usize> {
@@ -12,7 +12,7 @@ impl<const N: usize> Direction<N> {
         Self { versor }
     }
 
-    pub fn from_vector(vector: Vector<N>) -> Result<Self, VectorError> {
+    pub fn from_vector(vector: Vector<N>) -> Result<Self, AlgebraError> {
         Ok(Self {
             versor: vector.try_into()?,
         })

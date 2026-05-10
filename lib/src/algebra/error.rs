@@ -1,6 +1,6 @@
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum VectorError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlgebraError {
     ZeroVector,
     InvalidDimension,
 }

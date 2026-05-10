@@ -6,12 +6,11 @@ use crate::geoprofile::{
     dataset::GeoProfileDataset,
     error::GeoProfileError,
     records::{
-        line_intersection::LineIntersectionRecord,
-        polygon_intersection::PolygonIntersectionRecord,
+        intersection::IntersectionRecord,
         profile::ProfileRecord,
         profile_sample::ProfileSampleRecord,
-        projected_attitude::ProjectedAttitudeRecord,
-        projected_point::ProjectedPointRecord,
+        projection::ProjectedAttitudeRecord,
+        projection::ProjectedPointRecord,
         result_set::ResultSetRecord,
         source::SourceRecord,
     },
@@ -241,7 +240,7 @@ impl SqliteGeoProfileReader {
 
     }
 
-    pub fn read_line_intersections(&self) -> Result<Vec<LineIntersectionRecord>, GeoProfileError> {
+    pub fn read_line_intersections(&self) -> Result<Vec<IntersectionRecord>, GeoProfileError> {
 
         let mut stmt = self.conn.prepare(
             r#"
@@ -260,7 +259,7 @@ impl SqliteGeoProfileReader {
             [],
             |row| {
                 Ok(
-                    LineIntersectionRecord {
+                    IntersectionRecord {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
                         feat_category: row.get(2)?,
@@ -274,7 +273,7 @@ impl SqliteGeoProfileReader {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn read_polygon_intersections(&self) -> Result<Vec<PolygonIntersectionRecord>, GeoProfileError> {
+    pub fn read_polygon_intersections(&self) -> Result<Vec<IntersectionRecord>, GeoProfileError> {
 
         let mut stmt = self.conn.prepare(
             r#"
@@ -294,7 +293,7 @@ impl SqliteGeoProfileReader {
             [],
             |row| {
                 Ok(
-                    PolygonIntersectionRecord {
+                    IntersectionRecord {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
                         unit_name: row.get(2)?,

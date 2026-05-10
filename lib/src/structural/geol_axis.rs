@@ -4,8 +4,8 @@ pub struct GeologicalAxis {
     pub plunge: f64
 }
 
-impl Axis {
+impl GeologicalAxis {
 
-    fn new(tr: f64, pl: f64) -> Self { Axis{ trend: tr, plunge: pl }}
+    fn new(tr: f64, pl: f64) -> Self { GeologicalAxis{ trend: tr, plunge: pl }}
 
 }

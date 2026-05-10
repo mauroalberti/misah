@@ -1,4 +1,7 @@
 
+use super::point::Point3D;
+use crate::algebra::vector::Vector3D;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plane {
     pub point: Point3D,

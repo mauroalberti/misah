@@ -1,6 +1,6 @@
 
 use ndarray::Array2;
-use crate::rasters::geotransform::GeoTransform;
+use crate::raster::geotransform::GeoTransform;
 
 // modified from: https://stackoverflow.com/questions/13212212/creating-two-dimensional-arrays-in-rust
 

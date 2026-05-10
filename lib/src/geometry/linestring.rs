@@ -1,6 +1,5 @@
 
 use super::point::Point;
-use super::segment::Segment;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +83,7 @@ impl<const N: usize> Linestring<N> {
     }
 }
 
-impl<const N: usize> From<Vec<Point<N>>> for Line<N> {
+impl<const N: usize> From<Vec<Point<N>>> for Linestring<N> {
     fn from(points: Vec<Point<N>>) -> Self {
         Self::new(points)
     }
