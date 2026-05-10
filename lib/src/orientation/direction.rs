@@ -1,4 +1,6 @@
 
+use std::convert::TryInto;
+
 use crate::algebra::{AlgebraError, Vector, Versor};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,7 +39,7 @@ impl<const N: usize> Direction<N> {
     }
 
     pub fn angle_rad(&self, other: &Self) -> f64 {
-        self.dor(other).clamp(-1.0, 1.0).acos()
+        self.dot(other).clamp(-1.0, 1.0).acos()
     }
 
     pub fn angle_deg(&self, other: &Self) -> f64 {

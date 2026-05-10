@@ -1,6 +1,7 @@
 
 use super::geol_axis::{GeologicalAxis};
 
+#[derive(Debug, Clone)]
 pub struct GeologicalPlane {
     pub azimuth: f64,
     pub dip_angle: f64

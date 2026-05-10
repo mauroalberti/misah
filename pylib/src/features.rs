@@ -1,4 +1,4 @@
-use misah::features;
+use misah::geometry;
 
 use std::thread;
 use pyo3::prelude::*;

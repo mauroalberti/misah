@@ -1,4 +1,6 @@
 
+use crate::geometry::point::Point3D;
+
 use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
 
@@ -9,12 +11,19 @@ use crate::geoprofile::{
         intersection::IntersectionRecord,
         profile::ProfileRecord,
         profile_sample::ProfileSampleRecord,
-        projection::ProjectedAttitudeRecord,
-        projection::ProjectedPointRecord,
         result_set::ResultSetRecord,
         source::SourceRecord,
     },
     sqlite::schema::validate_geoprofile_schema,
+};
+
+use crate::geoprofile::records::projection::{
+    DownSense,
+    ProjectedAttitudeData,
+    ProjectedAttitudeRecord,
+    ProjectedBase,
+    ProjectedPointData,
+    ProjectedPointRecord,
 };
 
 pub struct SqliteGeoProfileReader {
@@ -33,6 +42,18 @@ impl SqliteGeoProfileReader {
 
     pub fn validate_schema(&self) -> Result<(), GeoProfileError> {
         validate_geoprofile_schema(&self.conn)
+    }
+
+    fn make_src_point(
+        x: Option<f64>,
+        y: Option<f64>,
+        z: Option<f64>,
+    ) -> Option<Point3D> {
+
+        match (x, y, z) {
+            (Some(x), Some(y), Some(z)) => Some(Point3D::from([x, y, z])),
+            _ => None,
+        }
     }
 
     pub fn read_result_sets(&self) -> Result<Vec<ResultSetRecord>, GeoProfileError> {
@@ -169,23 +190,25 @@ impl SqliteGeoProfileReader {
         let rows = stmt.query_map(
             [],
             |row| {
-                Ok(
-                    ProjectedPointRecord {
+                let src_x: Option<f64> = row.get(6)?;
+                let src_y: Option<f64> = row.get(7)?;
+                let src_z: Option<f64> = row.get(8)?;
+
+                Ok( ProjectedPointRecord {
+                    base: ProjectedBase {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
-                        label: row.get(2)?,
+                        category: row.get(2)?,
                         s: row.get(3)?,
                         z: row.get(4)?,
                         dist_to_profile: row.get(5)?,
-                        src_x: row.get(6)?,
-                        src_y: row.get(7)?,
-                        src_z: row.get(8)?,
+                        src_point: Self::make_src_point(src_x, src_y, src_z),
                         src_fid: row.get(9)?,
                         extra_json: row.get(10)?,
-                    }
-                )
+                    },
+                    data: ProjectedPointData,
+                })
             }
-
         )?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -196,7 +219,7 @@ impl SqliteGeoProfileReader {
 
         let mut stmt = self.conn.prepare(
             r#"SELECT
-                fid,
+                rec_id,
                 profile_id,
                 label,
                 s,
@@ -217,22 +240,43 @@ impl SqliteGeoProfileReader {
         )?;
 
         let rows = stmt.query_map([], |row| {
+
+            let down_sense_raw: String = row.get(6)?;
+
+            let down_sense = match down_sense_raw.to_lowercase().as_str() {
+                "left" => DownSense::Left,
+                "right" => DownSense::Right,
+                other => {
+                    return Err(rusqlite::Error::InvalidColumnType(
+                        6,
+                        format!("invalid down_sense value: {other}"),
+                        rusqlite::types::Type::Text,
+                    ));
+                }
+            };
+
+            let src_x: Option<f64> = row.get(10)?;
+            let src_y: Option<f64> = row.get(11)?;
+            let src_z: Option<f64> = row.get(12)?;
+
             Ok(ProjectedAttitudeRecord {
-                rec_id: row.get(0)?,
-                profile_id: row.get(1)?,
-                label: row.get(2)?,
-                s: row.get(3)?,
-                z: row.get(4)?,
-                slope_degr: row.get(5)?,
-                down_sense: row.get(6)?,
-                src_dip_dir: row.get(7)?,
-                src_dip_ang: row.get(8)?,
-                dist_to_profile: row.get(9)?,
-                src_x: row.get(10)?,
-                src_y: row.get(11)?,
-                src_z: row.get(12)?,
-                src_fid: row.get(13)?,
-                extra_json: row.get(14)?,
+                base: ProjectedBase {
+                    rec_id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    category: row.get(2)?,
+                    s: row.get(3)?,
+                    z: row.get(4)?,
+                    dist_to_profile: row.get(9)?,
+                    src_point: Self::make_src_point(src_x, src_y, src_z),
+                    src_fid: row.get(13)?,
+                    extra_json: row.get(14)?,
+                },
+                data: ProjectedAttitudeData {
+                    slope_degr: row.get(5)?,
+                    down_sense,
+                    src_dip_dir: row.get(7)?,
+                    src_dip_ang: row.get(8)?,
+                },
             })
         })?;
 
@@ -248,7 +292,8 @@ impl SqliteGeoProfileReader {
                 rec_id,
                 profile_id,
                 feat_category,
-                s,
+                s_from,
+                s_to,
                 extra_json
             FROM gp_intersected_lines
             ORDER BY profile_id, s, rec_id
@@ -262,9 +307,10 @@ impl SqliteGeoProfileReader {
                     IntersectionRecord {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
-                        feat_category: row.get(2)?,
-                        s: row.get(3)?,
-                        extra_json: row.get(4)?,
+                        category: row.get(2)?,
+                        s_from: row.get(3)?,
+                        s_to: row.get(4)?,
+                        extra_json: row.get(5)?,
                     }
                 )
             }
@@ -296,7 +342,7 @@ impl SqliteGeoProfileReader {
                     IntersectionRecord {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
-                        unit_name: row.get(2)?,
+                        category: row.get(2)?,
                         s_from: row.get(3)?,
                         s_to: row.get(4)?,
                         extra_json: row.get(5)?,
