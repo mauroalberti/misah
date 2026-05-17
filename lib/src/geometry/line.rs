@@ -40,13 +40,32 @@ impl<const N: usize> Line<N> {
 }
 
 
-#[test]
-fn line_point_at_zero_is_origin() {
-    let origin = Point::<3>::from([1.0, 2.0, 3.0]);
-    let direction = Versor::<3>::from([1.0, 0.0, 0.0]);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::algebra::vector::Vector;
+    use crate::geometry::point::Point;
 
-    let line = Line::new(origin, direction).unwrap();
-    let p = line.point_at(0.0);
+    #[test]
+    fn line_point_at_zero_is_origin() {
+        let origin = Point::<3>::from([1.0, 2.0, 3.0]);
+        let direction = Versor::new( [1.0, 0.0, 0.0] ).unwrap();
 
-    assert_eq!(p, origin);
+        let line = Line::new(origin, direction).unwrap();
+        let p = line.point_at(0.0);
+
+        assert_eq!(p, origin);
+    }
+
+    #[test]
+    fn line_point_at_parameter_is_correct() {
+        let origin = Point::<3>::from([0.0, 0.0, 0.0]);
+        let direction = Versor::<3>::new([10.0, 0.0, 0.0]).unwrap();
+
+        let line = Line::new(origin, direction).unwrap();
+        let p = line.point_at(2.0);
+
+        assert_eq!(p, Point::<3>::from([2.0, 0.0, 0.0]));
+    }
+
 }
