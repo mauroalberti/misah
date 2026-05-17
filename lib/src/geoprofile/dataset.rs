@@ -1,9 +1,9 @@
 
 use crate::geoprofile::records::{
+    intersection::IntersectionRecord,
     profile::ProfileRecord,
     profile_sample::ProfileSampleRecord,
-    projection::{ProjectedPointRecord, ProjectedAttitudeRecord},
-    intersection::IntersectionRecord,
+    projection::{ProjectedAttitudeRecord, ProjectedPointRecord},
     result_set::ResultSetRecord,
     source::SourceRecord,
 };

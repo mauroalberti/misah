@@ -1,8 +1,8 @@
 
 use crate::geometry::point::Point3D;
 
-use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
+use std::path::Path;
 
 use crate::geoprofile::{
     dataset::GeoProfileDataset,
@@ -184,7 +184,7 @@ impl SqliteGeoProfileReader {
                 extra_json
             FROM gp_projected_points
             ORDER BY profile_id, s, rec_id
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map(
@@ -215,7 +215,9 @@ impl SqliteGeoProfileReader {
 
     }
 
-    pub fn read_projected_attitudes(&self) -> Result<Vec<ProjectedAttitudeRecord>, GeoProfileError> {
+    pub fn read_projected_attitudes(
+        &self,
+    ) -> Result<Vec<ProjectedAttitudeRecord>, GeoProfileError> {
 
         let mut stmt = self.conn.prepare(
             r#"SELECT
@@ -332,7 +334,7 @@ impl SqliteGeoProfileReader {
                 extra_json
             FROM gp_intersected_polygons
             ORDER BY profile_id, s_from, s_to, rec_id
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map(
@@ -357,7 +359,7 @@ impl SqliteGeoProfileReader {
 
     pub fn read_sources(&self) -> Result<Vec<SourceRecord>, GeoProfileError> {
         let mut stmt = self.conn.prepare(
-           r#"
+            r#"
             SELECT
                 source_id,
                 result_set_id,
@@ -368,7 +370,7 @@ impl SqliteGeoProfileReader {
                 parameters_json
             FROM gp_sources
             ORDER BY source_id
-           "#
+           "#,
         )?;
 
         let rows = stmt.query_map(
@@ -386,7 +388,7 @@ impl SqliteGeoProfileReader {
                 })
             })?;
 
-            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 
     }
 

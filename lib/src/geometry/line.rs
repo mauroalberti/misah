@@ -1,7 +1,7 @@
 
 use std::convert::TryInto;
 
-use crate::algebra::{Versor, AlgebraError};
+use crate::algebra::{AlgebraError, Versor};
 use crate::geometry::point::Point;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,4 +30,23 @@ impl<const N: usize> Line<N> {
         Self::new(p0, direction)
     }
 
+    pub fn point_at(&self, t: f64) -> Point<N> {
+    Point {
+        coords: std::array::from_fn(|i| {
+            self.origin.coords[i] + t * self.direction.coords()[i]
+        }),
+    }}
+
+}
+
+
+#[test]
+fn line_point_at_zero_is_origin() {
+    let origin = Point::<3>::from([1.0, 2.0, 3.0]);
+    let direction = Versor::<3>::from([1.0, 0.0, 0.0]);
+
+    let line = Line::new(origin, direction).unwrap();
+    let p = line.point_at(0.0);
+
+    assert_eq!(p, origin);
 }

@@ -30,7 +30,7 @@ impl<const N: usize> Point<N> {
             .zip(other.coords.iter())
             .map(|(a, b)| {
                 let d = b - a;
-                d*d
+                d * d
             })
             .sum::<f64>()
             .sqrt()
@@ -53,15 +53,40 @@ impl Point<1> {
 }
 
 impl Point<2> {
-    pub fn x(&self) -> f64 { self.coords[0] }
-    pub fn y(&self) -> f64 { self.coords[1] }
+    pub fn x(&self) -> f64 {
+        self.coords[0]
+    }
+    pub fn y(&self) -> f64 {
+        self.coords[1]
+    }
 }
 
 impl Point<3> {
-    pub fn x(&self) -> f64 { self.coords[0] }
-    pub fn y(&self) -> f64 { self.coords[1] }
-    pub fn z(&self) -> f64 { self.coords[2] }
+    pub fn x(&self) -> f64 {
+        self.coords[0]
+    }
+    pub fn y(&self) -> f64 {
+        self.coords[1]
+    }
+    pub fn z(&self) -> f64 {
+        self.coords[2]
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_distance_2d_is_correct() {
+        let p1 = Point::<2>::from([0.0, 0.0]);
+        let p2 = Point::<2>::from([3.0, 4.0]);
+
+        assert_eq!(p1.distance(&p2), 5.0);
+    }
+}
+
+
 
 
 
