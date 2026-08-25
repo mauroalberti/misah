@@ -67,6 +67,19 @@ The extension is built as `mispy.mispy`, so its submodules register themselves
 under that name; `mispy/__init__.py` aliases them, which is what makes
 `import mispy.kernels` work rather than only `mispy.mispy.kernels`.
 
+Where the extension cannot be built or installed, `mispy.kernels` is instead the
+pure-Python `mispy/_reference.py`, under the same names and returning the same
+arrays; `mispy.is_compiled` says which one answered. QGIS is the case this exists
+for: a plugin neither picks the interpreter it is loaded into nor can count on a
+binary wheel installing, and vendoring — which is how qgSurf carries geogst —
+works for Python and not for a compiled extension. On the Malpi DEM the fallback
+takes about 300 ms against the 1 ms of the compiled kernel, the gap being the
+per-cell Python loop rather than the algorithm.
+
+Keeping a second implementation also buys the tests an oracle:
+`tests/test_reference.py` compares the two elementwise over four attitudes, and
+so can say they agree rather than merely that one of them runs.
+
 Run the tests from anywhere except `pylib` itself, whose source tree shadows the
 installed package.
 
