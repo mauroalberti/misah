@@ -6,8 +6,15 @@ edition = "2018"
 
 [lib]
 name = "misah"
-crate-type = ["cdylib"]
+# rlib alongside cdylib so the crate can be linked into test binaries.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["extension-module"]
+# extension-module deliberately leaves libpython unlinked, which a test binary
+# cannot do. Run the Rust tests with --no-default-features.
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.13.2", features = ["extension-module"] }
+pyo3 = { version = "0.13.2" }
 ndarray = "0.15.1"

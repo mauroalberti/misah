@@ -30,8 +30,18 @@ Two implementations are kept deliberately in step:
 
 `tests/test_plane_dem.py` validates the reference against the geoSurfDEM golden
 dataset (plane 135/35 over the Malpi ASTER DEM, in the sibling `geoSurfDEM`
-checkout) and pins the conventions both implementations must share. Run it with
-`python3 tests/test_plane_dem.py`.
+checkout) and pins the conventions both implementations must share.
+`tests/test_rust_equivalence.py` then runs the Rust kernel over the same DEM
+through `examples/plane_dem_asc` and compares the two outputs elementwise. Both
+walk cells in row-major order and key vertices by edge, so their point sequences
+correspond one to one; on the Malpi DEM they agree to better than 1e-6 m on an
+inclined and on a vertical plane alike.
+
+```sh
+python3 tests/test_plane_dem.py
+python3 tests/test_rust_equivalence.py
+cargo test --no-default-features
+```
 
 Two properties of that reference output are worth recording, since they set the
 tolerances the tests use: about half of its 1228 points are duplicates (618
@@ -43,8 +53,12 @@ four are a defect of that run rather than a disagreement over conventions.
 
 ### Status
 
-The Rust kernel has never been compiled: this machine has no Rust toolchain and
-no access to crates.io. It also cannot be built as it stands, because the crate
-is pinned to pyo3 0.13, which predates Python 3.11. Bringing the bindings up to a
-current pyo3 and a maturin build is the next step, and needs a compiler in the
-loop.
+The kernel is built and cross-validated; what is missing is the Python binding,
+so `misah_ref` is currently the only way to call it from Python.
+
+`extension-module` deliberately leaves libpython unlinked, which a test binary
+cannot do, so it is a default feature that the Rust tests turn off:
+`cargo test --no-default-features`. The crate is still pinned to pyo3 0.13, which
+predates Python 3.11 — it compiles, but no binding built from it will import into
+a current interpreter. Moving to a recent pyo3 and a maturin build is the next
+step, and the equivalence test above is what should guard it.
