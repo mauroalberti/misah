@@ -4,15 +4,24 @@ version = "0.2.0-alpha.0"
 authors = ["mauroalberti <alberti.m65@gmail.com>"]
 keywords = ["earth-sciences", "structural-geology"]
 categories = ["science"]
-edition = "2018"
+edition = "2021"
 repository = "https://gitlab.com/mauroalberti/misah"
+
+[features]
+default = ["extension-module"]
+# extension-module deliberately leaves libpython unlinked, which a test binary
+# cannot do. Turn it off to run `cargo test --workspace`.
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 misah = { path = "../lib/" }
 ndarray = "0.15.1"
-pyo3 = { version = "0.13.2", features = ["extension-module"] }
+numpy = "0.29"
+# abi3-py39 yields a single wheel valid for every Python from 3.9 on, which is
+# what makes the extension installable beside a QGIS interpreter we do not pick.
+pyo3 = { version = "0.29", features = ["abi3-py39"] }
 
 [lib]
 name = "mispy"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]

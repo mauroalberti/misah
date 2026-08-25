@@ -1,2 +1,18 @@
 [build-system]
-requires = ["setuptools", "wheel", "setuptools-rust"]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mispy"
+requires-python = ">=3.9"
+description = "Python bindings for misah, a crate for structural geology processings"
+authors = [{ name = "mauroalberti", email = "alberti.m65@gmail.com" }]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = ["numpy"]
+dynamic = ["version"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

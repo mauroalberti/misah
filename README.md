@@ -35,9 +35,49 @@ plane. A plane fitted to the whole set returns 134.9999/35.0005 and passes 8 mm
 from the nominal source point, so those four are a defect of that run rather than
 a disagreement over conventions.
 
+## Python bindings
+
+`pylib` builds the `mispy` extension with maturin, against pyo3 0.29 and
+`abi3-py39`, so one wheel serves every Python from 3.9 on. That matters for the
+QGIS side of the suite: a plugin cannot choose the interpreter it is loaded into,
+nor count on a compiler being available to build a version-specific extension.
+
+```sh
+cd pylib
+maturin develop --release   # build and install into the active environment
+maturin build --release     # produce a wheel under target/wheels
+python3 tests/test_kernels.py
+```
+
+```python
+import numpy as np
+from mispy.kernels import intersect_plane_grid
+
+points, segments = intersect_plane_grid(
+    np.ascontiguousarray(dem),   # C-contiguous, else ValueError
+    geotransform,                # the six GDAL elements
+    (x0, y0, z0),
+    135.0,                       # dip direction
+    35.0,                        # dip angle
+    nodata,
+)
+```
+
+The extension is built as `mispy.mispy`, so its submodules register themselves
+under that name; `mispy/__init__.py` aliases them, which is what makes
+`import mispy.kernels` work rather than only `mispy.mispy.kernels`.
+
+Run the tests from anywhere except `pylib` itself, whose source tree shadows the
+installed package.
+
 ### Status
 
 `raster::io` does not compile and is not wired into the module tree, so the
-example carries its own ESRI ASCII reader. `pylib` is still on pyo3 0.13, which
-predates Python 3.11: it builds, but no extension made from it will import into a
-current interpreter, and the kernel is not exposed there yet.
+example carries its own ESRI ASCII reader.
+
+`pylib/src` still holds three files left over from the setuptools-rust era, none
+of them referenced: `features.rs`, which reaches for the `sys.modules` trick that
+`mispy/__init__.py` now does properly, and the empty `georeferenced.rs` and
+`orientations.rs`. `setup.py` and `MANIFEST.in` are likewise superseded by
+maturin, and `setup.py` would fail anyway — it uses an `install_requires` it
+never defines.
