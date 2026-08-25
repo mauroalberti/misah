@@ -1,23 +1,6 @@
-[package]
-name = "misah-py"
-version = "0.1.0"
-authors = ["mauroalberti <alberti.m65@gmail.com>"]
-edition = "2021"
-
-[lib]
-name = "misah"
-# rlib alongside cdylib so the crate can be linked into test binaries.
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["extension-module"]
-# extension-module deliberately leaves libpython unlinked, which a test binary
-# cannot do. Run the Rust tests with --no-default-features.
-extension-module = ["pyo3/extension-module", "numpy"]
-
-[dependencies]
-# abi3-py39 yields a single wheel valid for every Python from 3.9 on, which is
-# what makes the extension installable next to a QGIS interpreter we do not pick.
-pyo3 = { version = "0.29", features = ["abi3-py39"] }
-numpy = { version = "0.29", optional = true }
-ndarray = "0.17"
+[workspace]
+resolver = "2"
+members = [
+	"lib",
+	"pylib",
+]
