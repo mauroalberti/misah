@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use super::{Axis};
 use pyo3::PyResult;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Copy)]
 pub struct GeolPlane {
     #[pyo3(get)]

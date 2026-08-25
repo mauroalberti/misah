@@ -1,4 +1,3 @@
-use pyo3::prelude::*;
 use ndarray::Array2;
 
 // modified from: https://stackoverflow.com/questions/13212212/creating-two-dimensional-arrays-in-rust

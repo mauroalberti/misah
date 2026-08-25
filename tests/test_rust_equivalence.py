@@ -72,6 +72,62 @@ def test_rust_matches_reference_on_a_vertical_plane():
     assert np.abs(rust - ref).max() < 1e-6
 
 
+def _compiled_kernels():
+    """The installed extension, or None when it has not been built yet."""
+    try:
+        from misah import kernels
+    except ImportError:
+        return None
+    return kernels
+
+
+def test_compiled_extension_matches_reference():
+    """The binding must not perturb what the kernel computes."""
+    kernels = _compiled_kernels()
+    if kernels is None:
+        print("SKIP  misah extension not installed")
+        return
+
+    dem, gt, nodata = read_esri_ascii(DEM_PATH)
+    gt_tuple = (
+        gt.x_origin, gt.pixel_width, gt.row_rotation,
+        gt.y_origin, gt.col_rotation, gt.pixel_height,
+    )
+
+    for dip_dir, dip_angle in ((DIP_DIR, DIP_ANGLE), (135.0, 90.0), (0.0, 0.0)):
+        pts, segs = kernels.intersect_plane_dem(
+            np.ascontiguousarray(dem), gt_tuple, SRC_PT, dip_dir, dip_angle, nodata
+        )
+        ref_pts, ref_segs = intersect_plane_dem(
+            dem, gt, SRC_PT, dip_dir, dip_angle, nodata
+        )
+        assert pts.shape == ref_pts.shape, (dip_dir, dip_angle, pts.shape, ref_pts.shape)
+        assert np.abs(pts - ref_pts).max() < 1e-9, (dip_dir, dip_angle)
+        assert np.array_equal(segs, ref_segs), (dip_dir, dip_angle)
+
+
+def test_compiled_extension_rejects_non_contiguous_dem():
+    """A strided view would be read as if packed; it must be refused, not misread."""
+    kernels = _compiled_kernels()
+    if kernels is None:
+        print("SKIP  misah extension not installed")
+        return
+
+    dem, gt, nodata = read_esri_ascii(DEM_PATH)
+    gt_tuple = (
+        gt.x_origin, gt.pixel_width, gt.row_rotation,
+        gt.y_origin, gt.col_rotation, gt.pixel_height,
+    )
+    strided = dem[:, ::2]
+    try:
+        kernels.intersect_plane_dem(
+            strided, gt_tuple, SRC_PT, DIP_DIR, DIP_ANGLE, nodata
+        )
+    except ValueError:
+        return
+    raise AssertionError("non-contiguous DEM was accepted")
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -1,8 +1,7 @@
 use pyo3::prelude::*;
 
-use pyo3::PyResult;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Copy)]
 pub struct Axis {
     #[pyo3(get)]

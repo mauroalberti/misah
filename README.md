@@ -38,10 +38,14 @@ correspond one to one; on the Malpi DEM they agree to better than 1e-6 m on an
 inclined and on a vertical plane alike.
 
 ```sh
-python3 tests/test_plane_dem.py
-python3 tests/test_rust_equivalence.py
-cargo test --no-default-features
+python3 tests/test_plane_dem.py         # conventions, against the golden dataset
+python3 tests/test_rust_equivalence.py  # Rust and the extension, against numpy
+cargo test --no-default-features        # kernel unit tests
 ```
+
+On the Malpi DEM (200 x 247 cells) the compiled kernel runs in about 1 ms
+against 300 ms for the reference — the reference walks cells in a Python loop,
+so the gap is the loop, not the algorithm.
 
 Two properties of that reference output are worth recording, since they set the
 tolerances the tests use: about half of its 1228 points are duplicates (618
@@ -51,14 +55,26 @@ elevation — lie up to 3.56 m off the plane. A plane fitted to the whole set
 returns 134.9999/35.0005 and passes 8 mm from the nominal source point, so those
 four are a defect of that run rather than a disagreement over conventions.
 
-### Status
+## Building
 
-The kernel is built and cross-validated; what is missing is the Python binding,
-so `misah_ref` is currently the only way to call it from Python.
+```sh
+maturin develop --release   # build and install into the active environment
+maturin build --release     # produce a wheel under target/wheels
+```
+
+The crate builds against pyo3 0.29 with `abi3-py39`, so one wheel serves every
+Python from 3.9 on. That matters for the QGIS side of the suite: a plugin cannot
+choose the interpreter it is loaded into, and cannot count on a compiler being
+present to build a version-specific extension.
 
 `extension-module` deliberately leaves libpython unlinked, which a test binary
 cannot do, so it is a default feature that the Rust tests turn off:
-`cargo test --no-default-features`. The crate is still pinned to pyo3 0.13, which
-predates Python 3.11 — it compiles, but no binding built from it will import into
-a current interpreter. Moving to a recent pyo3 and a maturin build is the next
-step, and the equivalence test above is what should guard it.
+`cargo test --no-default-features`. It also gates `kernels::py`, and with it the
+numpy dependency, keeping the kernels themselves buildable on their own.
+
+### Status
+
+Alpha. The nested modules are attributes of the extension rather than importable
+submodules, so it is `misah.geometry.geom2d.Point2D`, not
+`from misah.geometry.geom2d import Point2D`. `GeoTransform` has no constructor
+exposed and cannot be instantiated from Python.
