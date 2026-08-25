@@ -11,6 +11,7 @@ use crate::orientations::orien3d::{Axis, GeolPlane};
 
 pub mod geometry;
 pub mod georeferenced;
+pub mod kernels;
 pub mod orientations;
 
 
