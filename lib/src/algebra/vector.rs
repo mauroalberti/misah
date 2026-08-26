@@ -1,6 +1,8 @@
 
 use std::ops::{Add, Neg, Sub, Mul, Div};
 
+use super::constants::EPSILON;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vector<const N: usize> {
     pub coords: [f64; N],
@@ -27,7 +29,7 @@ impl<const N: usize> Vector<N> {
 
         let n = self.norm();
 
-        if n == 0.0 {
+        if n < EPSILON {
             return None;
         }
 
