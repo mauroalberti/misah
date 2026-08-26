@@ -1,6 +1,6 @@
 """Pure-Python implementation of the kernels, used when the extension is absent.
 
-`mispy/__init__.py` picks this up in place of the compiled `kernels` module, so
+`misah/__init__.py` picks this up in place of the compiled `kernels` module, so
 callers get the same names and the same results either way. That matters for
 QGIS, whose plugins cannot rely on a binary wheel being installable and cannot
 choose the interpreter they are loaded into.

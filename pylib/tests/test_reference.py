@@ -43,10 +43,10 @@ def read_esri_ascii(path):
 
 def _both():
     """The compiled kernel and the fallback, or None when only one is available."""
-    from mispy import _reference
+    from misah import _reference
 
     try:
-        from mispy.mispy import kernels as compiled
+        from misah._misah import kernels as compiled
     except ImportError:
         return None, _reference
     return compiled, _reference
@@ -92,7 +92,7 @@ def test_traces_agree_on_the_malpi_dem():
 
 def test_fallback_reproduces_the_known_malpi_result():
     """The fallback alone must reach the figures the C++ trace established."""
-    from mispy import _reference
+    from misah import _reference
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     dem = np.ascontiguousarray(dem)
@@ -110,7 +110,7 @@ def test_fallback_reproduces_the_known_malpi_result():
 
 def test_fallback_refuses_a_non_contiguous_dem():
     """It must reject what the extension rejects, not quietly accept it."""
-    from mispy import _reference
+    from misah import _reference
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     try:
@@ -123,12 +123,12 @@ def test_fallback_refuses_a_non_contiguous_dem():
 
 
 def test_package_exposes_a_kernels_module_either_way():
-    import mispy
+    import misah
 
-    assert hasattr(mispy, "kernels")
-    assert hasattr(mispy.kernels, "intersect_plane_grid")
-    assert hasattr(mispy.kernels, "plane_normal")
-    assert isinstance(mispy.is_compiled, bool)
+    assert hasattr(misah, "kernels")
+    assert hasattr(misah.kernels, "intersect_plane_grid")
+    assert hasattr(misah.kernels, "plane_normal")
+    assert isinstance(misah.is_compiled, bool)
 
 
 if __name__ == "__main__":

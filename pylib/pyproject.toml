@@ -3,7 +3,7 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mispy"
+name = "misah"
 requires-python = ">=3.9"
 description = "Python bindings for misah, a crate for structural geology processings"
 authors = [{ name = "mauroalberti", email = "alberti.m65@gmail.com" }]
@@ -16,3 +16,8 @@ dynamic = ["version"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+# Said outright rather than inferred: the distribution is `misah` and the crate
+# is `misah-py`, so nothing in the names lets maturin work out where the
+# extension belongs on its own.
+module-name = "misah._misah"
+python-source = "."

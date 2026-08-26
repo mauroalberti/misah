@@ -1,4 +1,4 @@
-"""Check the mispy bindings against the geoSurfDEM golden dataset.
+"""Check the misah bindings against the geoSurfDEM golden dataset.
 
 The binding must not perturb what the kernel computes, so the comparison is
 against a trace independently known to be correct: 404 vertices for plane 135/35
@@ -49,7 +49,7 @@ def plane_normal_reference(dip_dir, dip_angle):
 
 
 def test_normal_conventions():
-    from mispy.kernels import plane_normal
+    from misah.kernels import plane_normal
 
     assert np.allclose(plane_normal(0.0, 0.0), [0.0, 0.0, 1.0])
     assert np.allclose(plane_normal(90.0, 90.0), [1.0, 0.0, 0.0], atol=1e-12)
@@ -61,7 +61,7 @@ def test_normal_conventions():
 
 
 def test_malpi_trace_matches_the_known_result():
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     points, segments = intersect_plane_grid(
@@ -78,7 +78,7 @@ def test_malpi_trace_matches_the_known_result():
 
 
 def test_vertical_and_horizontal_planes():
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
 
@@ -102,7 +102,7 @@ def test_vertical_and_horizontal_planes():
 
 def test_non_contiguous_dem_is_refused():
     """A strided view would be read as if packed; it must fail loudly."""
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     try:

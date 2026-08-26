@@ -37,10 +37,17 @@ a disagreement over conventions.
 
 ## Python bindings
 
-`pylib` builds the `mispy` extension with maturin, against pyo3 0.29 and
-`abi3-py39`, so one wheel serves every Python from 3.9 on. That matters for the
-QGIS side of the suite: a plugin cannot choose the interpreter it is loaded into,
-nor count on a compiler being available to build a version-specific extension.
+`pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
+and `abi3-py39`, so one wheel serves every Python from 3.9 on. That matters for
+the QGIS side of the suite: a plugin cannot choose the interpreter it is loaded
+into, nor count on a compiler being available to build a version-specific
+extension.
+
+Three names, deliberately distinct. The distribution installed from PyPI is
+`misah`; the crate under `pylib` is `misah-py`, because the core crate in `lib`
+already holds `misah` and a workspace admits one package per name; the compiled
+extension is `misah._misah`, private because callers reach its contents through
+the aliases `misah/__init__.py` sets up.
 
 ```sh
 cd pylib
@@ -51,7 +58,7 @@ python3 tests/test_kernels.py
 
 ```python
 import numpy as np
-from mispy.kernels import intersect_plane_grid
+from misah.kernels import intersect_plane_grid
 
 points, segments = intersect_plane_grid(
     np.ascontiguousarray(dem),   # C-contiguous, else ValueError
@@ -63,13 +70,13 @@ points, segments = intersect_plane_grid(
 )
 ```
 
-The extension is built as `mispy.mispy`, so its submodules register themselves
-under that name; `mispy/__init__.py` aliases them, which is what makes
-`import mispy.kernels` work rather than only `mispy.mispy.kernels`.
+The extension is built as `misah._misah`, so its submodules register themselves
+under that name; `misah/__init__.py` aliases them, which is what makes
+`import misah.kernels` work rather than only `misah._misah.kernels`.
 
-Where the extension cannot be built or installed, `mispy.kernels` is instead the
-pure-Python `mispy/_reference.py`, under the same names and returning the same
-arrays; `mispy.is_compiled` says which one answered. QGIS is the case this exists
+Where the extension cannot be built or installed, `misah.kernels` is instead the
+pure-Python `misah/_reference.py`, under the same names and returning the same
+arrays; `misah.is_compiled` says which one answered. QGIS is the case this exists
 for: a plugin neither picks the interpreter it is loaded into nor can count on a
 binary wheel installing, and vendoring — which is how qgSurf carries geogst —
 works for Python and not for a compiled extension. On the Malpi DEM the fallback
@@ -90,7 +97,7 @@ example carries its own ESRI ASCII reader.
 
 `pylib/src` still holds three files left over from the setuptools-rust era, none
 of them referenced: `features.rs`, which reaches for the `sys.modules` trick that
-`mispy/__init__.py` now does properly, and the empty `georeferenced.rs` and
+`misah/__init__.py` now does properly, and the empty `georeferenced.rs` and
 `orientations.rs`. `setup.py` and `MANIFEST.in` are likewise superseded by
 maturin, and `setup.py` would fail anyway — it uses an `install_requires` it
 never defines.
