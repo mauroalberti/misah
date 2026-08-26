@@ -6,6 +6,11 @@ build-backend = "maturin"
 name = "misah"
 requires-python = ">=3.9"
 description = "Python bindings for misah, a crate for structural geology processings"
+license = "GPL-3.0-or-later"
+# A copy, not a link to the one at the repository root: the glob may not leave
+# the project directory, and conveying a binary under the GPL means the text
+# travels inside the artifact rather than being pointed at.
+license-files = ["LICENSE"]
 authors = [{ name = "mauroalberti", email = "alberti.m65@gmail.com" }]
 classifiers = [
     "Programming Language :: Rust",
