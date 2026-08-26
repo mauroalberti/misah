@@ -5,7 +5,9 @@
 name = "misah-py"
 version = "0.2.0-alpha.0"
 authors = ["mauroalberti <alberti.m65@gmail.com>"]
+description = "Python bindings for misah, a crate for structural geology processings."
 license = "GPL-3.0-or-later"
+readme = "README.md"
 keywords = ["earth-sciences", "structural-geology"]
 categories = ["science"]
 edition = "2021"

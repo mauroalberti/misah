@@ -4,3 +4,13 @@
 
 __pycache__/
 *.py[cod]
+
+# Compiled extensions. docs/notebooks/mispy.so, 3.4 MB of it, was tracked for
+# long enough that it is worth saying outright: these are build output, and
+# maturin puts them where the build wants them.
+*.so
+*.pyd
+*.dylib
+
+# Jupyter writes these beside the notebook and they duplicate it wholesale.
+.ipynb_checkpoints/

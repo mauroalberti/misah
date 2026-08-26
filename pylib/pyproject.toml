@@ -6,18 +6,30 @@ build-backend = "maturin"
 name = "misah"
 requires-python = ">=3.9"
 description = "Python bindings for misah, a crate for structural geology processings"
+readme = "README.md"
 license = "GPL-3.0-or-later"
 # A copy, not a link to the one at the repository root: the glob may not leave
 # the project directory, and conveying a binary under the GPL means the text
 # travels inside the artifact rather than being pointed at.
 license-files = ["LICENSE"]
 authors = [{ name = "mauroalberti", email = "alberti.m65@gmail.com" }]
+keywords = ["structural geology", "geospatial", "DEM", "GIS"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = ["numpy"]
 dynamic = ["version"]
+
+[project.urls]
+"Source Code" = "https://gitlab.com/mauroalberti/misah"
+"Bug Tracker" = "https://gitlab.com/mauroalberti/misah/-/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

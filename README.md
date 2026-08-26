@@ -95,9 +95,20 @@ installed package.
 `raster::io` does not compile and is not wired into the module tree, so the
 example carries its own ESRI ASCII reader.
 
-`pylib/src` still holds three files left over from the setuptools-rust era, none
-of them referenced: `features.rs`, which reaches for the `sys.modules` trick that
-`misah/__init__.py` now does properly, and the empty `georeferenced.rs` and
-`orientations.rs`. `setup.py` and `MANIFEST.in` are likewise superseded by
-maturin, and `setup.py` would fail anyway — it uses an `install_requires` it
-never defines.
+The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
+Everything else in `lib` — the geometries, the orientations, the GeoProfiler
+SQLite reader — is reachable from Rust only.
+
+The setuptools-rust leftovers are gone: `features.rs`, the empty
+`georeferenced.rs` and `orientations.rs`, and `setup.py` with `MANIFEST.in`,
+superseded by maturin and broken besides — `setup.py` used an `install_requires`
+it never defined.
+
+Nothing yet builds wheels for anything but the host. A wheel built here is
+tagged `manylinux_2_34`, since the extension picks up the glibc it is compiled
+against, and will not install on Ubuntu 20.04, Debian 11 or RHEL 8. Wheels for
+macOS, Windows and aarch64 need CI, and there is none: the Travis configuration
+was dead and has been removed, and no GitLab equivalent has replaced it yet.
+
+`docs/notebooks/misah.ipynb` calls an API that no longer exists
+(`misah.orientations.orien3d.Axis`) and does not run.
