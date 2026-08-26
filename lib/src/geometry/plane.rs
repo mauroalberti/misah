@@ -1,4 +1,5 @@
 
+use super::line::Line3D;
 use super::point::Point3D;
 use crate::algebra::constants::EPSILON;
 use crate::algebra::vector::Vector3D;
@@ -71,6 +72,27 @@ impl Plane {
         self.distance_to_point(point) <= tolerance
     }
 
+    /// The point where `line` crosses this (unbounded) plane.
+    ///
+    /// `None` if the line is parallel to the plane: either disjoint from it,
+    /// or lying in it entirely, in which case every point of the line
+    /// qualifies and there is no single one to return. `line.direction` is a
+    /// `Versor` and `self.normal` is likewise unit, so their dot product is
+    /// directly the cosine of the angle between them -- no scaling by vector
+    /// lengths is needed to make `EPSILON` a meaningful threshold here, unlike
+    /// the collinearity check in `from_three_points`.
+    pub fn intersect_line(&self, line: &Line3D) -> Option<Point3D> {
+        let denom = self.normal.dot(&line.direction.as_vector());
+
+        if denom.abs() < EPSILON {
+            return None;
+        }
+
+        let t = -self.signed_distance_to_point(&line.origin) / denom;
+
+        Some(line.point_at(t))
+    }
+
     pub fn coefficients(&self) -> (f64, f64, f64, f64) {
 
         let [a, b, c] = self.normal.coords;
@@ -85,6 +107,7 @@ impl Plane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::Versor;
 
     #[test]
     fn three_well_spread_points_give_a_valid_plane() {
@@ -149,5 +172,61 @@ mod tests {
         );
 
         assert!(plane.is_none());
+    }
+
+    #[test]
+    fn a_vertical_line_meets_a_horizontal_plane_straight_below_its_origin() {
+        let plane = Plane::new(Point3D::from([0.0, 0.0, 0.0]), Vector3D::from([0.0, 0.0, 1.0]))
+            .unwrap();
+        let line = Line3D::new(
+            Point3D::from([5.0, 5.0, 10.0]),
+            Versor::new([0.0, 0.0, -1.0]).unwrap(),
+        )
+        .unwrap();
+
+        let p = plane.intersect_line(&line).expect("the line crosses the plane");
+        assert!(p.approx_eq(&Point3D::from([5.0, 5.0, 0.0]), 1e-12));
+    }
+
+    #[test]
+    fn intersection_with_a_tilted_plane() {
+        // The plane x + y + z = 0, and the vertical line x=3, y=0.
+        let normal = Vector3D::from([1.0, 1.0, 1.0]).normalize().unwrap();
+        let plane = Plane::new(Point3D::from([0.0, 0.0, 0.0]), normal).unwrap();
+        let line = Line3D::new(
+            Point3D::from([3.0, 0.0, 0.0]),
+            Versor::new([0.0, 0.0, 1.0]).unwrap(),
+        )
+        .unwrap();
+
+        let p = plane.intersect_line(&line).expect("the line crosses the plane");
+        assert!(p.approx_eq(&Point3D::from([3.0, 0.0, -3.0]), 1e-12));
+        assert!(plane.contains_point(&p, 1e-12));
+    }
+
+    #[test]
+    fn a_line_parallel_to_and_outside_the_plane_has_no_intersection() {
+        let plane = Plane::new(Point3D::from([0.0, 0.0, 0.0]), Vector3D::from([0.0, 0.0, 1.0]))
+            .unwrap();
+        let line = Line3D::new(
+            Point3D::from([0.0, 0.0, 5.0]),
+            Versor::new([1.0, 0.0, 0.0]).unwrap(),
+        )
+        .unwrap();
+
+        assert!(plane.intersect_line(&line).is_none());
+    }
+
+    #[test]
+    fn a_line_lying_in_the_plane_has_no_single_intersection() {
+        let plane = Plane::new(Point3D::from([0.0, 0.0, 0.0]), Vector3D::from([0.0, 0.0, 1.0]))
+            .unwrap();
+        let line = Line3D::new(
+            Point3D::from([0.0, 0.0, 0.0]),
+            Versor::new([1.0, 0.0, 0.0]).unwrap(),
+        )
+        .unwrap();
+
+        assert!(plane.intersect_line(&line).is_none());
     }
 }
