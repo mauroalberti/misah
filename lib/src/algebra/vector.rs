@@ -17,6 +17,10 @@ impl<const N: usize> Vector<N> {
         Self { coords }
     }
 
+    pub fn coord(&self, i: usize) -> Option<f64> {
+        self.coords.get(i).copied()
+    }
+
     pub fn norm(&self) -> f64 {
         self.coords
             .iter()
@@ -142,6 +146,18 @@ impl Vector<3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coord_returns_the_requested_component() {
+        let v = Vector::<3>::from([1.0, 2.0, 3.0]);
+        assert_eq!(v.coord(1), Some(2.0));
+    }
+
+    #[test]
+    fn coord_out_of_range_is_none() {
+        let v = Vector::<3>::from([1.0, 2.0, 3.0]);
+        assert_eq!(v.coord(3), None);
+    }
 
     #[test]
     fn norm_of_a_3_4_5_vector_is_5() {
