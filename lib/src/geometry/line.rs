@@ -31,11 +31,8 @@ impl<const N: usize> Line<N> {
     }
 
     pub fn point_at(&self, t: f64) -> Point<N> {
-    Point {
-        coords: std::array::from_fn(|i| {
-            self.origin.coords[i] + t * self.direction.coords()[i]
-        }),
-    }}
+        self.origin + self.direction.as_vector() * t
+    }
 
 }
 
