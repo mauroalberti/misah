@@ -312,7 +312,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidHeader { message, .. } if message.contains("NROWS")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -323,7 +323,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidHeader { message, .. } if message.contains("XLLCENTER")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -336,7 +336,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidHeader { message, .. } if message.contains("CELLSIZE")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -349,7 +349,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidHeader { message, .. } if message.contains("CELLSIZE")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -368,7 +368,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidHeader { message, .. } if message.contains("no value")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -379,7 +379,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidBody { message, .. } if message.contains("holds 5")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -398,7 +398,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::InvalidBody { message, .. } if message.contains("value 4")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 
@@ -408,7 +408,7 @@ CELLSIZE 1.0
 
         assert!(
             matches!(&err, RasterIoError::Unreadable { path, .. } if path.contains("dem.asc")),
-            "unexpected error: {err}"
+            "unexpected error: {}", err
         );
     }
 }

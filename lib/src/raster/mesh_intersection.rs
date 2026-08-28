@@ -703,8 +703,8 @@ mod tests {
 
         // Within a cell: the two kernels place their vertices on different
         // sides, so the extremes need not coincide exactly.
-        assert!((mesh_y.0 - plane_y.0).abs() <= 1.0, "{mesh_y:?} vs {plane_y:?}");
-        assert!((mesh_y.1 - plane_y.1).abs() <= 1.0, "{mesh_y:?} vs {plane_y:?}");
+        assert!((mesh_y.0 - plane_y.0).abs() <= 1.0, "{:?} vs {:?}", mesh_y, plane_y);
+        assert!((mesh_y.1 - plane_y.1).abs() <= 1.0, "{:?} vs {:?}", mesh_y, plane_y);
 
         for p in from_mesh.points() {
             assert!(plane.distance_to_point(p) < 1e-9);

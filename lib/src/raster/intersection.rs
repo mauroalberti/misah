@@ -166,10 +166,12 @@ pub fn intersect_plane_grid(
                             let fb = signed_distance(r1, c1);
                             let t = fa / (fa - fb);
 
-                            let mut coords = [0.0f64; 3];
-                            for k in 0..3 {
-                                coords[k] = pa.coords[k] + t * (pb.coords[k] - pa.coords[k]);
-                            }
+                            // Interpolate to the crossing along the edge. The
+                            // same idiom Point uses for its own coordinatewise
+                            // arithmetic.
+                            let coords: [f64; 3] = std::array::from_fn(|k| {
+                                pa.coords[k] + t * (pb.coords[k] - pa.coords[k])
+                            });
 
                             let idx = out.points.len();
                             out.points.push(Point3D::from(coords));

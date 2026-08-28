@@ -58,13 +58,36 @@ test:kernel:
     # so they are worth compiling even though nothing imports them.
     - cargo build -p misah --examples --locked
 
+# pyo3 wants an interpreter to configure the build, even for an abi3 extension
+# that deliberately links none of it. Anything touching pylib needs this first.
+.with-python:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3
+
 # The whole workspace, pylib included, so that a break in the bindings does not
 # wait for a release to show itself.
 build:workspace:
+  extends: .with-python
   stage: test
-  before_script:
-    # pyo3 wants an interpreter to configure the build, even for an abi3
-    # extension that deliberately links none of it.
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3
   script:
     - cargo build --workspace --locked
+
+# Clippy over everything, tests and examples included, denying warnings.
+#
+# It earns being a gate: it was clippy that caught ten assertion messages
+# written as `"...{err}"` in an edition-2018 crate, where a lone literal is not
+# a format string, so each would have printed the placeholder instead of the
+# error at the moment a test failed in this very pipeline.
+#
+# rustfmt is deliberately not here. The spacing in this tree is a house style,
+# and `cargo fmt --check` would fail on the first file it opened; making it a
+# gate would mean reformatting the crate, which is a decision of its own and not
+# a side effect of wanting a linter.
+lint:clippy:
+  extends: .with-python
+  stage: test
+  script:
+    # The official Rust image installs the minimal profile, which leaves clippy
+    # out; a no-op when some future image ships it.
+    - rustup component add clippy
+    - cargo clippy --workspace --all-targets --locked -- -D warnings

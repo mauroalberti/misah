@@ -10,6 +10,14 @@ use misah::raster::grid::Grid;
 use misah::raster::intersection::intersect_plane_grid as kernel;
 use misah::structural::geol_plane::GeologicalPlane;
 
+/// What a grid intersection hands back to Python: the vertices, as an (N, 3)
+/// array of coordinates, and the chords, as an (M, 2) array of indices into
+/// them.
+///
+/// Named rather than spelled out at the signature, where four nested generics
+/// take longer to read than they say.
+type VerticesAndSegments<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<i64>>);
+
 /// Intersect an unbounded geological plane with a DEM.
 ///
 /// `geotransform` is the GDAL six-element affine transform. Returns
@@ -35,7 +43,7 @@ fn intersect_plane_grid<'py>(
     dip_angle_degr: f64,
     nodata: Option<f64>,
     epsg_code: i32,
-) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<i64>>)> {
+) -> PyResult<VerticesAndSegments<'py>> {
     let view = dem.as_array();
     if !view.is_standard_layout() {
         return Err(PyValueError::new_err(
