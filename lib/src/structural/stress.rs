@@ -31,8 +31,11 @@
 use thiserror::Error;
 
 use crate::algebra::versor::Versor3D;
+use crate::orientation::direction::Direction3D;
+use crate::structural::fault::FaultPlane;
 use crate::structural::geol_axis::GeologicalAxis;
 use crate::structural::geol_plane::GeologicalPlane;
+use crate::structural::slickenline::Slickenline;
 
 /// Below this, a shear stress is numerical noise rather than a driving force
 /// -- the fault plane sits on, or acutely close to, a principal stress axis,
@@ -167,6 +170,57 @@ impl ReducedStressTensor {
         t
     }
 
+    /// The misfit between the slip this tensor predicts on a fault and the
+    /// slip observed there, in degrees, averaged over the fault's slickenlines.
+    ///
+    /// `None` when there is nothing to score: no slickenline was recorded, or
+    /// the plane sits on a principal stress axis, where the forward model
+    /// predicts no direction at all. That is a fault the data cannot speak
+    /// about, which is not the same as one it fits badly, so an inversion has
+    /// to leave it out of the average rather than count it as zero.
+    ///
+    /// This is the quantity a fault-slip inversion minimises, evaluated
+    /// forward for one candidate tensor and one fault.
+    pub fn misfit_on(&self, fault: &FaultPlane) -> Option<f64> {
+
+        let solution = self.solve(fault.plane());
+
+        let mut total = 0.0;
+        let mut counted = 0usize;
+
+        for slickenline in fault.slickenlines() {
+            if let Some(misfit) = solution.misfit_against(slickenline) {
+                total += misfit;
+                counted += 1;
+            }
+        }
+
+        (counted > 0).then(|| total / counted as f64)
+    }
+
+    /// The mean misfit over a set of faults, and how many of them it came
+    /// from.
+    ///
+    /// Faults the forward model can say nothing about are skipped, so the
+    /// count returned is the one the mean is over -- an inversion comparing
+    /// two candidate tensors needs to know it, since a tensor that silences
+    /// half the dataset should not win on the strength of the remainder.
+    /// `None` when no fault could be scored at all.
+    pub fn mean_misfit(&self, faults: &[FaultPlane]) -> Option<(f64, usize)> {
+
+        let mut total = 0.0;
+        let mut counted = 0usize;
+
+        for fault in faults {
+            if let Some(misfit) = self.misfit_on(fault) {
+                total += misfit;
+                counted += 1;
+            }
+        }
+
+        (counted > 0).then(|| (total / counted as f64, counted))
+    }
+
     /// Apply this tensor to a fault plane, predicting the slip it drives.
     ///
     /// Follows Xu (2004): the traction on the plane is resolved into a
@@ -294,6 +348,20 @@ impl StressSolution {
         self.theoretical_slickenline
             .as_ref()
             .map(|predicted| predicted.dot(observed).clamp(-1.0, 1.0).acos().to_degrees())
+    }
+
+    /// The misfit against an observed slickenline, taken modulo 180 degrees
+    /// where its sense of movement was not read.
+    ///
+    /// Prefer this to `angular_misfit` whenever the observation is a
+    /// `Slickenline` rather than a bare direction: an undirected slip is as
+    /// well matched by a prediction pointing the other way, and scoring such a
+    /// fault at 180 degrees instead of 0 would penalise an inversion for
+    /// exactly the faults whose sense nobody could read.
+    pub fn misfit_against(&self, observed: &Slickenline) -> Option<f64> {
+        self.theoretical_slickenline
+            .as_ref()
+            .map(|predicted| observed.angle_to(&Direction3D::new(*predicted)))
     }
 }
 
@@ -495,6 +563,94 @@ mod tests {
 
             assert!(cross.dot(&s3).clamp(-1.0, 1.0).acos().to_degrees() < 1e-6);
         }
+    }
+
+    #[test]
+    fn misfit_on_a_fault_slipping_as_predicted_is_zero() {
+        use crate::structural::fault::FaultPlane;
+        use crate::structural::slickenline::SlipSense;
+
+        // S1 vertical, S3 east: a 60-degree plane slips down its own dip,
+        // which is rake -90.
+        let tensor = ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0), GeologicalAxis::new(90.0, 0.0), 0.5,
+        ).unwrap();
+        let plane = GeologicalPlane::from_rhr_strike(0.0, 60.0);
+
+        let fault = FaultPlane::from_rake(plane, -90.0, Some(SlipSense::Down));
+
+        assert!(tensor.misfit_on(&fault).unwrap() < 1e-9);
+    }
+
+    #[test]
+    fn misfit_on_a_fault_slipping_across_the_prediction_is_ninety_degrees() {
+        use crate::structural::fault::FaultPlane;
+        use crate::structural::slickenline::SlipSense;
+
+        let tensor = ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0), GeologicalAxis::new(90.0, 0.0), 0.5,
+        ).unwrap();
+        let plane = GeologicalPlane::from_rhr_strike(0.0, 60.0);
+
+        // Rake 0 is strike-slip: at right angles to the dip-slip predicted.
+        let fault = FaultPlane::from_rake(plane, 0.0, Some(SlipSense::Right));
+
+        assert!((tensor.misfit_on(&fault).unwrap() - 90.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_fault_with_no_slickenline_cannot_be_scored() {
+        use crate::structural::fault::FaultPlane;
+
+        let tensor = ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0), GeologicalAxis::new(90.0, 0.0), 0.5,
+        ).unwrap();
+
+        let fault = FaultPlane::without_slickenlines(GeologicalPlane::from_rhr_strike(0.0, 60.0));
+
+        assert!(tensor.misfit_on(&fault).is_none());
+    }
+
+    #[test]
+    fn a_fault_on_a_principal_axis_cannot_be_scored_either() {
+        use crate::structural::fault::FaultPlane;
+        use crate::structural::slickenline::SlipSense;
+
+        // A horizontal plane under a vertical S1: no shear, so the forward
+        // model predicts no direction, so there is nothing to compare against
+        // -- which is not the same as a bad fit, and must not be counted as
+        // zero.
+        let tensor = ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0), GeologicalAxis::new(90.0, 0.0), 0.5,
+        ).unwrap();
+        let fault = FaultPlane::from_rake(
+            GeologicalPlane::from_rhr_strike(0.0, 0.0), 0.0, Some(SlipSense::Right));
+
+        assert!(tensor.misfit_on(&fault).is_none());
+    }
+
+    #[test]
+    fn mean_misfit_reports_how_many_faults_it_could_score() {
+        use crate::structural::fault::FaultPlane;
+        use crate::structural::slickenline::SlipSense;
+
+        let tensor = ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0), GeologicalAxis::new(90.0, 0.0), 0.5,
+        ).unwrap();
+
+        let faults = vec![
+            FaultPlane::from_rake(
+                GeologicalPlane::from_rhr_strike(0.0, 60.0), -90.0, Some(SlipSense::Down)),
+            // Unscorable: horizontal plane, no shear under a vertical S1.
+            FaultPlane::from_rake(
+                GeologicalPlane::from_rhr_strike(0.0, 0.0), 0.0, Some(SlipSense::Right)),
+            FaultPlane::without_slickenlines(GeologicalPlane::from_rhr_strike(90.0, 60.0)),
+        ];
+
+        let (misfit, scored) = tensor.mean_misfit(&faults).unwrap();
+
+        assert_eq!(scored, 1, "only the first fault can be scored");
+        assert!(misfit < 1e-9);
     }
 
     #[test]

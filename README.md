@@ -166,6 +166,53 @@ without handing the type to the caller. Both have a pure-Python mirror in
 `misah/_reference.py`, checked against the compiled kernel over the same five
 Fortran-verified cases.
 
+## Fault-slip inversion
+
+`lib/src/structural/inversion.rs` runs the forward model backwards: given
+faults with their observed slip, it searches for the reduced stress tensor that
+best explains them. That search is what made the forward problem worth
+compiling, and what the sentence above was promising — one forward solution per
+candidate tensor per fault, which for the default grid of some 21 000
+candidates over a hundred faults is a couple of million of them.
+
+`FaultPlane` is the input, and is what connects a group of types that until now
+led nowhere: `Direction3D` was reached only by `Slickenline`, `Slickenline` only
+by `FaultPlane`, and `FaultPlane` by nothing at all. It now validates the
+invariant its absence let through — that a slickenline must lie *in* the plane
+it is recorded on, within a degree, since a lineation off the plane is not a
+fault with a small error but two measurements that do not belong together.
+
+Two details of the domain that the geometry alone would get wrong:
+
+- **An unread slip sense is a line, not a vector.** Where the sense of movement
+  was not determined, a prediction pointing the other way along the same
+  lineation fits perfectly, so `Slickenline::angle_to` takes the misfit modulo
+  180 degrees. Scoring such a fault at 180 instead of 0 would penalise an
+  inversion for exactly the faults nobody could read the sense of.
+- **A fault the model cannot speak about is not a fault it fits badly.** A plane
+  lying on a principal stress axis carries no shear, so no slip direction is
+  predicted; `misfit_on` returns `None` there rather than zero, and
+  `mean_misfit` reports how many faults its average actually came from, so a
+  candidate that silences half the dataset cannot win on the strength of the
+  remainder.
+
+The search is exhaustive rather than a descent, because the misfit surface is
+not convex — a fault set carrying two superposed tectonic phases has two minima
+by construction, and a descent would report whichever it fell into without ever
+saying the other was there. `runners_up` is returned alongside `best` for the
+same reason: a minimum that stands alone reads differently from one on a
+plateau.
+
+The test that matters generates faults from a known tensor through the forward
+model and asks the inversion to recover it, which it does to within the grid
+step for a vertical-S1 and for a strike-slip setting alike.
+
+Not exposed to Python. Every function in `misah.kernels` carries a pure-Python
+mirror in `_reference.py`, which is what lets the tests say the two agree rather
+than that one of them runs; a grid search rewritten in numpy would be the one
+place that rule costs more than it returns, and it is also the one function
+where the compiled version is the entire point.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
@@ -251,15 +298,11 @@ the only raster format handled, anything wider meaning GDAL. It returns the
 nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
 since at sea that is a depth and not a hole.
 
-`orientation::axis` is empty, and `orientation::direction::Direction` is reached
-only by `structural::slickenline::Slickenline`, itself reached only by
-`structural::fault::FaultPlane`, which nothing reaches at all — a chain of three
-types with no consumer. `structural::stress` would have been the natural one,
-and takes a bare `GeologicalPlane` instead: a fault is a plane plus its observed
-slickenlines, which is exactly what the *inverse* problem needs, so either
-`FaultPlane` grows into that or the chain goes. Deciding which is what would
-settle whether an axis belongs in `orientation` or in `structural`, where
-`GeologicalAxis` currently lives.
+`structural::focal_mechanism` is still an empty struct, and
+`gp_projected_focal_mechanisms` is read from a GeoProfiler export into records
+that nothing yet computes with — the next thing in this direction, and the one
+`structural::stress` would extend to, focal mechanisms being fault-slip data
+that arrives already reduced to a plane and a rake.
 
 The Python surface is four functions: `intersect_plane_grid` and `plane_normal`
 for the raster side, `solve_stress` and `rake_to_slickenline` for the
