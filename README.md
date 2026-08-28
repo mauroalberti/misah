@@ -11,9 +11,8 @@ Currently it is in alpha mode.
 zero-level set of `Plane::signed_distance_to_point` sampled at the grid nodes and
 extracted by marching squares. Building on the signed distance instead of a
 `z = z(x, y)` plane expression keeps vertical planes an ordinary case, and the
-cost is one pass over the cells — geoSurfDEM's `IntersectDEM` solves the more
-general surface-mesh problem by testing every DEM triangle against every mesh
-triangle.
+cost is one pass over the cells. The general case, a surface of arbitrary shape,
+is `raster::mesh_intersection` below.
 
 `GeologicalPlane::to_plane` bridges an attitude to the geometric plane, so a
 caller works in dip direction and dip angle rather than in normals.
@@ -34,6 +33,67 @@ CSV rows 644-647, in two pairs sharing an elevation — lie up to 3.56 m off the
 plane. A plane fitted to the whole set returns 134.9999/35.0005 and passes 8 mm
 from the nominal source point, so those four are a defect of that run rather than
 a disagreement over conventions.
+
+## Mesh-grid intersection
+
+`lib/src/raster/mesh_intersection.rs` cuts the grid with a triangulated surface
+rather than a single plane — the case a folded or faulted geological surface
+needs. It is a port of geoSurfDEM's `IntersectDEM`, the one part of that suite
+with no equivalent in geogst. Each point comes out with the attitude of the mesh
+triangle that produced it, so the result is a set of located attitudes, ready
+for `BestFitGeoplanes`-style inversion, and not merely a trace.
+
+```sh
+cargo run --release -p misah --example mesh_dem_vtk -- <dem.asc> <surface.vtk>
+```
+
+`geometry::triangle::Triangle3D` and `geometry::mesh::TriangleMesh` carry the
+surface; the mesh is indexed (a vertex pool plus index triplets) because that is
+how a VTK `POLYDATA` file gives it. Reading VTK is left to the example, being no
+business of a raster kernel.
+
+Three things depart from the C++ deliberately:
+
+- **Where the points come from.** The original intersected the two triangle
+  planes into a line, then intersected that line with each DEM side. Here a DEM
+  side is cut against the mesh triangle's plane directly, interpolating between
+  the signed distances of its two endpoints — the construction the plane kernel
+  already uses. Same points, without the intermediate line, whose construction
+  needed an arbitrary 100-unit displacement, an unguarded division, and could
+  return an uninitialised point when all three of its determinants fell below
+  tolerance.
+- **What gets compared.** A DEM *is* a uniform spatial index, so each mesh
+  triangle is mapped through the inverse geotransform (`GeoTransform::node_rc`,
+  new) onto the cells its footprint covers, widened by one cell so that a
+  surface passing exactly through a column of nodes still finds its crossings.
+  No index is built, because the grid already is one.
+- **Shared sides.** Crossings are keyed on the DEM side that produced them, so
+  the side two adjacent DEM triangles have in common is cut once. This is the
+  source of the duplication in the reference output noted above; the count of
+  suppressed repeats is reported in the run's statistics rather than hidden.
+
+Against the same golden dataset (surface 135/35 over the Malpi ASTER DEM), the
+port returns 614 points against the reference's 618 distinct ones, every one
+reported at 135.00/35.00, in 29 ms. Two independent checks, both at the 1 cm the
+CSV is written to:
+
+| | on the plane, max residual | off the DEM surface, median / max |
+| --- | --- | --- |
+| misah | 0.008 m | 0.003 m / 0.010 m |
+| C++ reference | 3.55 m | 0.038 m / 0.213 m |
+
+Both figures for misah are the CSV rounding itself, so the points sit on the
+plane and on the topography as exactly as the output can express; the reference
+misses the DEM surface by more than a centimetre at 511 of its 617 testable
+points, which is where the ~0.18 m median offset between the two point sets
+comes from. The spatial restriction takes the comparisons from the 49 million
+pairs the C++ makes after its own volume prefilter (505 mesh triangles × 97,908
+DEM triangles) down to 23,606.
+
+Note that `test_data/src_planes/malpi_045_90.vtk` in geoSurfDEM is a byte-copy
+of `malpi_135_35.vtk`, so that suite has no vertical-surface case despite the
+name; the vertical and node-aligned configurations are covered by unit tests
+instead.
 
 ## Python bindings
 
@@ -96,8 +156,8 @@ installed package.
 example carries its own ESRI ASCII reader.
 
 The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
-Everything else in `lib` — the geometries, the orientations, the GeoProfiler
-SQLite reader — is reachable from Rust only.
+Everything else in `lib` — the geometries, the orientations, the mesh-grid
+intersection, the GeoProfiler SQLite reader — is reachable from Rust only.
 
 The setuptools-rust leftovers are gone: `features.rs`, the empty
 `georeferenced.rs` and `orientations.rs`, and `setup.py` with `MANIFEST.in`,
