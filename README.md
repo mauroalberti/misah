@@ -95,6 +95,69 @@ of `malpi_135_35.vtk`, so that suite has no vertical-surface case despite the
 name; the vertical and node-aligned configurations are covered by unit tests
 instead.
 
+## Forward stress on a fault plane
+
+`lib/src/structural/stress.rs` is the direct Wallace-Bott problem: given a
+reduced stress tensor (Angelier, 1984 — S1/S3 orientation and the shape ratio
+Phi), predict the slip a fault plane would show under it. It is the inverse of
+what a fault-slip inversion solves for, and it is a port of `ForwardStress.f95`,
+a Fortran tool of Alberti (2010) that once lived in this repository's own
+history under `GeoFaults`, before being dropped for a Rust port that was never
+carried through.
+
+This one arrived by way of geogst first (`geogst.core.geology.stress`), where
+`Plane.rake_to_direct` turned out to already implement the Fortran's own
+rake-to-slickenline formula exactly — both are Aki & Richards (1980) — and
+where the whole algorithm was checked against the Fortran source itself:
+compiled unmodified with gfortran, driven by a small program calling
+`stresssolution_calc` directly, over five geological cases. Three matched
+outright. Two did not, and the reason was a real bug in the 2010 source:
+`module vector_processing` carries no `implicit none`, so `vector1_magn` inside
+`vector_normalization` — reached through `vector_projection`, used for the
+normal-stress vector every solution goes through — is an undeclared name,
+silently typed as single-precision `REAL` by Fortran's implicit-typing rule
+rather than the double precision the rest of the tool uses. The truncation is
+usually too small to matter, but the predicted rake reaches it through an
+`acos` close to the edge of its domain in near-strike-slip cases, where an
+error below float32 precision in the cosine becomes one four orders of
+magnitude larger in the angle — 1.4e-5 degrees on one case, arrived at through
+a chain of double-precision arithmetic that looks correct at a glance.
+Recompiling with `-fimplicit-none`, declaring `vector1_magn`'s type, moves
+those two cases onto what the geogst port already computed, agreeing to 12+
+significant digits; an independent 50-digit `mpmath` recomputation of the same
+five cases confirms the corrected numbers, not the original binary's, are the
+mathematically correct ones.
+
+This Rust port is checked against the same five cases and the same corrected
+values — `structural::stress::tests::against_the_fortran_original` — so the
+same bug does not need rediscovering here.
+
+`ReducedStressTensor::new` takes S1 and S3 as `GeologicalAxis`, sub-orthogonal,
+plus Phi; S2 completes a right-handed cyclic triad (`S1 x S2 = S3`,
+`S2 x S3 = S1`), matching the sign the Fortran original builds. `sigma1`/`sigma3`
+default to 1/0 through `ReducedStressTensor::normalized` — the usual
+normalization when only the tensor's shape is known, as from an inversion —
+which leaves the predicted rake correct while making slip tendency and
+deformation index meaningless; supply the true magnitudes when they are known
+and those are wanted. `solve` resolves the tensor onto a `GeologicalPlane` and
+returns a `StressSolution`: traction, normal and shear stress always, and,
+where the shear is not numerical noise, the predicted rake, slickenline, slip
+tendency and deformation index. `angular_misfit` compares the prediction
+against an observed slickenline — what an inversion would minimize, run
+forward.
+
+Two small primitives came out of this that the rest of the structural code
+will reuse: `GeologicalAxis::as_versor`/`from_versor` (trend/plunge in
+`(East, North, Up)` and back — `orientation::axis` had stood empty until now),
+and `GeologicalPlane::rhr_strike`/`from_rhr_strike`/`rake_to_versor`, the last
+being the Aki & Richards formula itself, exposed rather than kept private to
+`solve`, since it is the piece any future fault-slip *inversion* would need to
+call once per candidate tensor per fault — which is also the reason this went
+into `misah` and not only geogst: the direct problem is O(1) per fault, with no
+performance case of its own, but it is the exact inner loop a grid search over
+candidate tensors would evaluate, at whatever count of faults and grid points
+made that search worth compiling.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
@@ -159,7 +222,8 @@ since at sea that is a depth and not a hole.
 
 The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
 Everything else in `lib` — the geometries, the orientations, the mesh-grid
-intersection, the GeoProfiler SQLite reader — is reachable from Rust only.
+intersection, the forward stress solution, the GeoProfiler SQLite reader — is
+reachable from Rust only.
 
 `geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
 it — and `lib/tests` runs that against two: a schema-v1 export of the Timpa San

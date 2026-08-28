@@ -2,6 +2,7 @@
 use super::geol_axis::{GeologicalAxis};
 
 use crate::algebra::Vector;
+use crate::algebra::versor::Versor3D;
 use crate::geometry::plane::Plane;
 use crate::geometry::point::Point3D;
 
@@ -14,6 +15,41 @@ pub struct GeologicalPlane {
 impl GeologicalPlane {
 
     pub fn new(az: f64, dip: f64) -> Self { GeologicalPlane{ azimuth: az, dip_angle: dip }}
+
+    /// Build a plane from its strike by the right-hand rule rather than its
+    /// dip azimuth: walking `strike` with the dip on the right hand reaches
+    /// `strike + 90`, which is what this stores as `azimuth`.
+    pub fn from_rhr_strike(strike: f64, dip: f64) -> Self {
+        Self::new((strike + 90.0).rem_euclid(360.0), dip)
+    }
+
+    /// The strike, by the right-hand rule: the inverse of `from_rhr_strike`.
+    pub fn rhr_strike(&self) -> f64 {
+        (self.azimuth - 90.0).rem_euclid(360.0)
+    }
+
+    /// The direction a slickenline of the given rake points on this plane,
+    /// Aki & Richards (1980)'s convention: rake 0 is left-lateral, 90
+    /// reverse, +/-180 right-lateral, -90 normal.
+    ///
+    /// Unit length is an algebraic identity of the formula (the strike terms
+    /// cancel by `sin^2 + cos^2 = 1`, then so do the dip ones), holding for
+    /// every strike, dip and rake -- there is no input this can fail on.
+    pub fn rake_to_versor(&self, rake_degrees: f64) -> Versor3D {
+
+        let strike = self.rhr_strike().to_radians();
+        let dip = self.dip_angle.to_radians();
+        let rake = rake_degrees.to_radians();
+
+        let coords = [
+            rake.cos() * strike.sin() - rake.sin() * dip.cos() * strike.cos(),
+            rake.cos() * strike.cos() + rake.sin() * dip.cos() * strike.sin(),
+            rake.sin() * dip.sin(),
+        ];
+
+        Versor3D::new(coords)
+            .expect("a unit vector for any strike, dip and rake, by construction")
+    }
 
     pub fn normal_axis(&self) -> GeologicalAxis {
 
@@ -141,6 +177,50 @@ mod tests {
         // The dip direction of a horizontal plane is undefined; only the dip
         // angle -- the part that actually means something -- is checked.
         assert!(GeologicalPlane::from_plane(&plane).dip_angle.abs() < 1e-9);
+    }
+
+    #[test]
+    fn rhr_strike_and_from_rhr_strike_round_trip() {
+        for &(strike, dip) in &[(0.0, 60.0), (30.0, 70.0), (200.0, 50.0), (350.0, 10.0)] {
+            let plane = GeologicalPlane::from_rhr_strike(strike, dip);
+            assert!((plane.rhr_strike() - strike).abs() < 1e-9);
+            assert_eq!(plane.dip_angle, dip);
+        }
+    }
+
+    #[test]
+    fn rhr_strike_is_ninety_degrees_behind_the_dip_azimuth() {
+        // strike + 90 = dip azimuth, wrapped into [0, 360) rather than left
+        // negative -- the case a plain Rust `%` would get wrong.
+        assert_eq!(GeologicalPlane::new(45.0, 30.0).rhr_strike(), 315.0);
+    }
+
+    #[test]
+    fn a_rake_of_minus_90_is_pure_normal_dip_slip() {
+        // Rake -90 (Aki & Richards) points straight down the dip vector,
+        // whatever the strike: the classic Andersonian normal-fault check.
+        let plane = GeologicalPlane::from_rhr_strike(0.0, 60.0);
+
+        let slick = plane.rake_to_versor(-90.0);
+        let dip_vector = GeologicalAxis::new(plane.azimuth, plane.dip_angle).as_versor();
+
+        for i in 0..3 {
+            assert!(
+                (slick.coords()[i] - dip_vector.coords()[i]).abs() < 1e-12,
+                "rake -90 should coincide with the dip vector"
+            );
+        }
+    }
+
+    #[test]
+    fn rake_to_versor_is_always_unit_length() {
+        for &(strike, dip, rake) in &[
+            (0.0, 60.0, -90.0), (30.0, 70.0, -2.26), (200.0, 50.0, 43.56), (10.0, 0.5, 179.0),
+        ] {
+            let v = GeologicalPlane::from_rhr_strike(strike, dip).rake_to_versor(rake);
+            let norm_sq: f64 = v.coords().iter().map(|c| c * c).sum();
+            assert!((norm_sq - 1.0).abs() < 1e-12, "strike {} dip {} rake {}", strike, dip, rake);
+        }
     }
 
     #[test]
