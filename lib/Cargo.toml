@@ -12,11 +12,10 @@ exclude = [
 ]
 keywords = ["earth-sciences", "structural-geology"]
 categories = ["science"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 ndarray = "0.15.4"
-nalgebra = "0.32"
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 

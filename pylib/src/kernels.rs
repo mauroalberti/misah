@@ -34,7 +34,6 @@ type VerticesAndSegments<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<
     dip_dir_degr,
     dip_angle_degr,
     nodata = None,
-    epsg_code = 0,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn intersect_plane_grid<'py>(
@@ -45,7 +44,6 @@ fn intersect_plane_grid<'py>(
     dip_dir_degr: f64,
     dip_angle_degr: f64,
     nodata: Option<f64>,
-    epsg_code: i32,
 ) -> PyResult<VerticesAndSegments<'py>> {
     let view = dem.as_array();
     if !view.is_standard_layout() {
@@ -62,7 +60,6 @@ fn intersect_plane_grid<'py>(
     // few megabytes at most, and it keeps the kernel free of lifetimes.
     let grid = Grid {
         transform: GeoTransform { data: geotransform },
-        epsg_code,
         data: view.to_owned(),
     };
 

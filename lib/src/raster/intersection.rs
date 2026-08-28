@@ -203,7 +203,6 @@ mod tests {
             transform: GeoTransform {
                 data: [0.0, 1.0, 0.0, nrows as f64, 0.0, -1.0],
             },
-            epsg_code: 32633,
             data: Array2::from_elem((nrows, ncols), z),
         }
     }

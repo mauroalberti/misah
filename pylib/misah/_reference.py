@@ -103,7 +103,6 @@ def intersect_plane_grid(
     dip_dir_degr: float,
     dip_angle_degr: float,
     nodata: Optional[float] = None,
-    epsg_code: int = 0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Intersect an unbounded geological plane with a DEM.
 

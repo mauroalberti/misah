@@ -305,5 +305,23 @@ macOS, Windows and aarch64 need runners for those platforms, which is a question
 about the GitLab plan rather than about the code, and until it is answered
 nothing in `lib` can reach a QGIS installation that is not this one.
 
-`docs/notebooks/misah.ipynb` calls an API that no longer exists
-(`misah.orientations.orien3d.Axis`) and does not run.
+`docs/notebooks/misah.ipynb` is gone rather than repaired. Every path in it was
+dead, not merely the one previously named here: `misah.geometry.geom2d`,
+`misah.geometry.geom3d`, `misah.orientations.orien3d`,
+`misah.georeferenced.georef2d` — the last of which was a file deleted two
+commits before this line was written — and it compared results against `pygsf`,
+which geogst itself superseded. Nothing in it touched any of the four functions
+the package exposes today. A notebook covering those would be worth having, and
+would be a new one.
+
+`lib/examples/test.rs` is gone with it: a nalgebra hello-world computing the
+distance between two points, referring to nothing in this crate, and the sole
+reason `nalgebra` appeared in `lib/Cargo.toml` — 97 lines of lockfile and a
+whole dependency tree for an example that demonstrated nothing about misah.
+
+Both crates are now on edition 2021. `lib` was on 2018, which is what let
+`assert!(cond, "…{err}")` pass as a plain string rather than a format string,
+and so print the placeholder instead of the error at the moment a test failed;
+ten such assertions had to be corrected by hand once clippy pointed at them.
+The edition closes the class rather than the instances. `cargo fix --edition`
+needed no source changes to make the move.

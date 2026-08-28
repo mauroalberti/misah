@@ -82,7 +82,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let (grid, nodata) = read_esri_ascii_grid(&args[1], 32633)
+    let (grid, nodata) = read_esri_ascii_grid(&args[1])
         .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1) });
     let mesh = read_vtk_triangle_strips(&args[2]);
 

@@ -431,7 +431,6 @@ mod tests {
             transform: GeoTransform {
                 data: [0.0, 1.0, 0.0, nrows as f64, 0.0, -1.0],
             },
-            epsg_code: 32633,
             data: Array2::from_elem((nrows, ncols), z),
         }
     }
@@ -715,7 +714,6 @@ mod tests {
     fn a_grid_too_small_to_hold_a_cell_finds_nothing() {
         let grid = Grid {
             transform: GeoTransform { data: [0.0, 1.0, 0.0, 1.0, 0.0, -1.0] },
-            epsg_code: 32633,
             data: Array2::from_elem((1, 5), 0.0),
         };
 

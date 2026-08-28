@@ -52,7 +52,6 @@ const HEADER_KEYS: [&str; 8] = [
 /// rather than a marker; a caller wanting the default can supply it knowingly.
 pub fn read_esri_ascii_grid(
     path: impl AsRef<Path>,
-    epsg_code: i32,
 ) -> Result<(Grid, Option<f64>), RasterIoError> {
 
     let path = path.as_ref();
@@ -63,7 +62,7 @@ pub fn read_esri_ascii_grid(
         source,
     })?;
 
-    parse_esri_ascii_grid(&text, epsg_code, &name)
+    parse_esri_ascii_grid(&text, &name)
 }
 
 /// Parse an ESRI ASCII grid already in memory.
@@ -77,7 +76,6 @@ pub fn read_esri_ascii_grid(
 /// line and one value per line are both common, and both are read.
 pub fn parse_esri_ascii_grid(
     text: &str,
-    epsg_code: i32,
     source_name: &str,
 ) -> Result<(Grid, Option<f64>), RasterIoError> {
 
@@ -195,7 +193,6 @@ pub fn parse_esri_ascii_grid(
                 -cellsize,
             ],
         },
-        epsg_code,
         data: Array2::from_shape_vec((nrows, ncols), values)
             .expect("the value count was just checked against the declared shape"),
     };
@@ -221,7 +218,7 @@ NODATA_VALUE -9999
 ";
 
     fn parse(text: &str) -> Result<(Grid, Option<f64>), RasterIoError> {
-        parse_esri_ascii_grid(text, 32633, "test")
+        parse_esri_ascii_grid(text, "test")
     }
 
     #[test]
@@ -404,7 +401,7 @@ CELLSIZE 1.0
 
     #[test]
     fn a_missing_file_is_reported_with_its_path() {
-        let err = read_esri_ascii_grid("/nonexistent/dem.asc", 32633).unwrap_err();
+        let err = read_esri_ascii_grid("/nonexistent/dem.asc").unwrap_err();
 
         assert!(
             matches!(&err, RasterIoError::Unreadable { path, .. } if path.contains("dem.asc")),

@@ -29,7 +29,7 @@ fn main() {
 
     let parse = |i: usize| args[i].parse::<f64>().expect("bad numeric argument");
 
-    let (grid, nodata) = read_esri_ascii_grid(&args[1], 32633)
+    let (grid, nodata) = read_esri_ascii_grid(&args[1])
         .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1) });
     let src_pt = Point3D::from([parse(2), parse(3), parse(4)]);
     let plane = GeologicalPlane::new(parse(5), parse(6))
