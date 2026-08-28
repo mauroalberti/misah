@@ -147,9 +147,9 @@ against an observed slickenline — what an inversion would minimize, run
 forward.
 
 Two small primitives came out of this that the rest of the structural code
-will reuse: `GeologicalAxis::as_versor`/`from_versor` (trend/plunge in
-`(East, North, Up)` and back — `orientation::axis` had stood empty until now),
-and `GeologicalPlane::rhr_strike`/`from_rhr_strike`/`rake_to_versor`, the last
+will reuse: `structural::geol_axis::GeologicalAxis::as_versor`/`from_versor`
+(trend/plunge in `(East, North, Up)` and back), and
+`GeologicalPlane::rhr_strike`/`from_rhr_strike`/`rake_to_versor`, the last
 being the Aki & Richards formula itself, exposed rather than kept private to
 `solve`, since it is the piece any future fault-slip *inversion* would need to
 call once per candidate tensor per fault — which is also the reason this went
@@ -228,11 +228,18 @@ works for Python and not for a compiled extension. On the Malpi DEM the fallback
 takes about 300 ms against the 1 ms of the compiled kernel, the gap being the
 per-cell Python loop rather than the algorithm.
 
-Keeping a second implementation also buys the tests an oracle:
-`tests/test_reference.py` compares the two elementwise — over four attitudes for
-the plane-grid kernel, and over the same five stress cases checked against the
-Fortran original — and so can say they agree rather than merely that one of
-them runs.
+Keeping a second implementation also buys the tests an oracle: they compare the
+two elementwise — `tests/test_reference.py` over four attitudes of the
+plane-grid kernel, `tests/test_stress.py` over the five stress cases checked
+against the Fortran original — and so can say they agree rather than merely
+that one of them runs.
+
+The three files split by what they need, not by what they cover.
+`test_stress.py` is numbers in, numbers out, so it runs in CI; `test_kernels.py`
+and `test_reference.py` read the Malpi crop from the geoSurfDEM repository and
+run by hand. The DEM committed under `example_data` is a wider crop of the same
+ASTER tile — 213x260 against 200x247 — so it cannot stand in without rewriting
+the vertex counts those tests assert.
 
 Run the tests from anywhere except `pylib` itself, whose source tree shadows the
 installed package.
@@ -243,6 +250,16 @@ installed package.
 the only raster format handled, anything wider meaning GDAL. It returns the
 nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
 since at sea that is a depth and not a hole.
+
+`orientation::axis` is empty, and `orientation::direction::Direction` is reached
+only by `structural::slickenline::Slickenline`, itself reached only by
+`structural::fault::FaultPlane`, which nothing reaches at all — a chain of three
+types with no consumer. `structural::stress` would have been the natural one,
+and takes a bare `GeologicalPlane` instead: a fault is a plane plus its observed
+slickenlines, which is exactly what the *inverse* problem needs, so either
+`FaultPlane` grows into that or the chain goes. Deciding which is what would
+settle whether an axis belongs in `orientation` or in `structural`, where
+`GeologicalAxis` currently lives.
 
 The Python surface is four functions: `intersect_plane_grid` and `plane_normal`
 for the raster side, `solve_stress` and `rake_to_slickenline` for the
@@ -275,8 +292,11 @@ The setuptools-rust leftovers are gone: `features.rs`, the empty
 superseded by maturin and broken besides — `setup.py` used an `install_requires`
 it never defined.
 
-`.gitlab-ci.yml` runs the tests on Linux at every push, and builds the workspace
-and the examples. It stops there: it does not build wheels.
+`.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
+the examples, gates on clippy, and installs the built wheel to run
+`pylib/tests/test_stress.py` against it — the Python bindings imported and
+called, not merely compiled. It stops short of building wheels for anything but
+that one Linux target.
 
 Nothing yet builds wheels for anything but the host. A wheel built here is
 tagged `manylinux_2_34`, since the extension picks up the glibc it is compiled

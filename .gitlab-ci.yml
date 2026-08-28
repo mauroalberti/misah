@@ -91,3 +91,36 @@ lint:clippy:
     # out; a no-op when some future image ships it.
     - rustup component add clippy
     - cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# The Python bindings, actually imported and called rather than merely compiled.
+#
+# `build:workspace` proves the extension builds; it says nothing about whether
+# `import misah` finds it, whether the pure-Python fallback agrees with it, or
+# whether a pyo3 signature default resolves. Those are separate claims, and the
+# first thing this suite ever caught was one of them: solve_stress returned its
+# vectors as lists from the compiled side and tuples from the fallback.
+#
+# Only `test_stress.py` runs here. `test_kernels.py` and `test_reference.py`
+# read the Malpi crop from the geoSurfDEM repository, which is not in this tree
+# and whose row and column counts their expected vertex counts depend on; the
+# DEM committed under `example_data` is a wider crop of the same ASTER tile, so
+# it cannot stand in without rewriting those numbers. Until one of the two is
+# resolved, the raster bindings stay verified by hand.
+test:python:
+  stage: test
+  before_script:
+    # PEP 668 marks the Debian interpreter externally managed, so pip needs a
+    # virtualenv even here.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin numpy
+  script:
+    - . /tmp/venv/bin/activate
+    # The built wheel rather than `maturin develop`: it is what a user installs,
+    # and installing it is itself part of what this job is checking.
+    - cd pylib && maturin build --release --out /tmp/wheels && cd ..
+    - . /tmp/venv/bin/activate && pip install --no-index /tmp/wheels/*.whl
+    # From the repository root, never from pylib, whose source tree shadows the
+    # installed package.
+    - python3 pylib/tests/test_stress.py
