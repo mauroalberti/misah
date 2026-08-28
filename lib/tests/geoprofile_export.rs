@@ -7,9 +7,15 @@
 //! had: schema validation asks for the right ones, the SELECT asked for the
 //! polygon table's, and nothing ever ran the two against each other.
 //!
-//! The fixture declares `schema_version = 1`; qgSurf writes 5 now. Versions 2
-//! to 4 only added tables, and v5 changed how a line intersection records its
-//! position, so several tests here are about reading both shapes.
+//! That fixture declares `schema_version = 1`. `export_synthetic_v5.gpkg` is
+//! the other end: one profile, every one of the thirteen tables filled, written
+//! by qgSurf's own exporter through its public insert functions -- see
+//! `data/make_export_synthetic_v5.py`, which regenerates it. The two projects
+//! agree on a file format that nothing else spans, so the fixture is the
+//! agreement, and a hand-built copy of the DDL would drift from it unnoticed.
+//!
+//! Versions 2 to 4 only added tables; v5 changed how a line intersection
+//! records its position. Both shapes are read, and both are tested.
 
 use std::path::PathBuf;
 
@@ -22,6 +28,14 @@ fn fixture() -> PathBuf {
 
 fn reader() -> SqliteGeoProfileReader {
     SqliteGeoProfileReader::open(fixture()).expect("the fixture opens read-only")
+}
+
+fn v5_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/export_synthetic_v5.gpkg")
+}
+
+fn v5_reader() -> SqliteGeoProfileReader {
+    SqliteGeoProfileReader::open(v5_fixture()).expect("the v5 fixture opens read-only")
 }
 
 #[test]
@@ -185,50 +199,41 @@ fn a_pre_v5_line_intersection_reads_as_a_degenerate_span() {
 }
 
 #[test]
-fn a_v5_line_intersection_keeps_the_span_it_covers() {
-    // From v5 the table records s_from and s_to. A crossing is a degenerate
-    // span; a segment lying along the section trace covers a real one, which is
-    // what the older single column could not say.
-    let path = temp_copy("misah_geoprofile_lines_v5.gpkg");
-
-    {
-        let conn = rusqlite::Connection::open(&path).expect("the copy opens");
-        conn.execute("DROP TABLE gp_intersected_lines", []).expect("writable");
-        conn.execute(
-            "CREATE TABLE gp_intersected_lines (
-                 rec_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 profile_id INTEGER NOT NULL,
-                 feat_category TEXT DEFAULT '',
-                 s_from REAL NOT NULL,
-                 s_to REAL NOT NULL,
-                 extra_json TEXT DEFAULT NULL)",
-            [],
-        )
-        .expect("writable");
-        conn.execute(
-            "INSERT INTO gp_intersected_lines(profile_id, feat_category, s_from, s_to)
-             SELECT profile_id, 'faglia', 200.0, 250.0 FROM gp_profiles LIMIT 1",
-            [],
-        )
-        .expect("writable");
-        conn.execute(
-            "INSERT INTO gp_intersected_lines(profile_id, feat_category, s_from, s_to)
-             SELECT profile_id, 'contatto', 300.0, 300.0 FROM gp_profiles LIMIT 1",
-            [],
-        )
-        .expect("writable");
-    }
-
-    let r = SqliteGeoProfileReader::open(&path).expect("opens");
+fn a_v5_export_is_valid_and_reads_whole() {
+    let r = v5_reader();
     r.validate_schema().expect("the span form is a valid export");
 
-    let lines = r.read_line_intersections().expect("reads");
+    let dataset = r.read_all().expect("every table reads");
 
-    assert_eq!(lines.len(), 2);
-    assert_eq!((lines[0].s_from, lines[0].s_to), (200.0, 250.0));
-    assert_eq!((lines[1].s_from, lines[1].s_to), (300.0, 300.0));
+    assert_eq!(dataset.result_sets.len(), 1);
+    assert_eq!(dataset.profiles.len(), 1);
+    assert_eq!(dataset.profile_samples.len(), 11);
+    assert_eq!(dataset.sources.len(), 2);
+    assert_eq!(dataset.projected_points.len(), 1);
+    assert_eq!(dataset.projected_attitudes.len(), 2);
+    assert_eq!(dataset.polygon_intersections.len(), 2);
+}
 
-    let _ = std::fs::remove_file(&path);
+#[test]
+fn a_v5_line_intersection_keeps_the_span_it_covers() {
+    // The case schema v5 exists for. The exporter wrote a crossing at 300, a
+    // stretch run along from 600 to 750, and another crossing at 880; before
+    // v5 the stretch would have arrived as two rows no different from the two
+    // crossings.
+    let lines = v5_reader().read_line_intersections().expect("reads");
+
+    assert_eq!(lines.len(), 3);
+
+    assert_eq!((lines[0].s_from, lines[0].s_to), (300.0, 300.0));
+    assert_eq!((lines[1].s_from, lines[1].s_to), (600.0, 750.0));
+    assert_eq!((lines[2].s_from, lines[2].s_to), (880.0, 880.0));
+
+    assert_eq!(lines[0].category.as_deref(), Some("faglia"));
+    assert_eq!(lines[2].category.as_deref(), Some("contatto"));
+
+    // One of the three covers ground rather than a point: that is the whole
+    // distinction, and it must survive the file.
+    assert_eq!(lines.iter().filter(|l| l.s_to > l.s_from).count(), 1);
 }
 
 #[test]
@@ -250,71 +255,30 @@ fn the_tables_added_after_v1_come_back_empty_rather_than_failing() {
 
 #[test]
 fn the_tables_added_after_v1_are_read_when_present() {
-    let path = temp_copy("misah_geoprofile_v4_tables.gpkg");
-
-    {
-        let conn = rusqlite::Connection::open(&path).expect("the copy opens");
-        conn.execute_batch(
-            "CREATE TABLE gp_projected_focal_mechanisms (
-                 rec_id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL,
-                 label TEXT DEFAULT '', s REAL NOT NULL, z REAL NOT NULL,
-                 strike REAL NOT NULL, dip REAL NOT NULL, rake REAL NOT NULL,
-                 profile_azimuth REAL NOT NULL, dist_to_profile REAL, src_x REAL,
-                 src_y REAL, src_z REAL, src_fid INTEGER, extra_json TEXT);
-             CREATE TABLE gp_profile_vertices (
-                 vertex_id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL,
-                 vertex_ndx INTEGER NOT NULL, kind TEXT NOT NULL, s REAL NOT NULL,
-                 x REAL NOT NULL, y REAL NOT NULL, lon REAL, lat REAL, z REAL,
-                 extra_json TEXT);
-             CREATE TABLE gp_graphical_params (
-                 params_id INTEGER PRIMARY KEY AUTOINCREMENT, result_set_id INTEGER NOT NULL,
-                 profile_id INTEGER, params_json TEXT NOT NULL);
-             CREATE TABLE gp_source_categories (
-                 category_id INTEGER PRIMARY KEY AUTOINCREMENT, result_set_id INTEGER NOT NULL,
-                 data_kind TEXT NOT NULL, position INTEGER NOT NULL, category TEXT NOT NULL,
-                 color TEXT);
-
-             INSERT INTO gp_projected_focal_mechanisms
-                 (profile_id, label, s, z, strike, dip, rake, profile_azimuth,
-                  dist_to_profile, src_x, src_y, src_z, src_fid)
-             SELECT profile_id, 'ML 4.3', 1500.0, -8000.0, 135.0, 60.0, -90.0, 45.0,
-                    120.0, 600000.0, 4440000.0, -8000.0, 7 FROM gp_profiles LIMIT 1;
-
-             INSERT INTO gp_profile_vertices (profile_id, vertex_ndx, kind, s, x, y, lon, lat, z)
-             SELECT profile_id, 0, 'start', 0.0, 600000.0, 4440000.0, 16.0, 40.1, 850.0
-             FROM gp_profiles LIMIT 1;
-             INSERT INTO gp_profile_vertices (profile_id, vertex_ndx, kind, s, x, y, lon, lat, z)
-             SELECT profile_id, 1, 'break', 500.0, 600400.0, 4440300.0, NULL, NULL, NULL
-             FROM gp_profiles LIMIT 1;
-
-             INSERT INTO gp_graphical_params (result_set_id, profile_id, params_json)
-             VALUES (1, NULL, '{\"vertical_exaggeration\": 2}');
-
-             INSERT INTO gp_source_categories (result_set_id, data_kind, position, category, color)
-             VALUES (1, 'line_intersections', 0, 'faglia', '#ff0000'),
-                    (1, 'line_intersections', 1, 'contatto', NULL);",
-        )
-        .expect("the copy is writable");
-    }
-
-    let r = SqliteGeoProfileReader::open(&path).expect("opens");
+    let r = v5_reader();
 
     let mechanisms = r.read_projected_focal_mechanisms().expect("reads");
     assert_eq!(mechanisms.len(), 1);
-    assert_eq!(mechanisms[0].base.category.as_deref(), Some("ML 4.3"));
+    assert_eq!(mechanisms[0].base.category.as_deref(), Some("ML 4.3 2026-03-11"));
     assert_eq!(mechanisms[0].data.strike, 135.0);
+    assert_eq!(mechanisms[0].data.dip, 60.0);
     assert_eq!(mechanisms[0].data.rake, -90.0);
     assert_eq!(mechanisms[0].data.profile_azimuth, 45.0);
-    // src_x/y/z are present, so they become a point rather than three options.
+    // A hypocentre eight kilometres down, so the projected z is well below the
+    // topography the same profile carries.
+    assert!(mechanisms[0].base.z < 0.0);
     assert!(mechanisms[0].base.src_point.is_some());
 
     let vertices = r.read_profile_vertices().expect("reads");
-    assert_eq!(vertices.len(), 2);
+    assert_eq!(vertices.len(), 3);
     assert_eq!(vertices[0].kind, VertexKind::Start);
     assert_eq!(vertices[1].kind, VertexKind::Break);
+    assert_eq!(vertices[2].kind, VertexKind::End);
+    assert_eq!(vertices[0].s, 0.0);
     assert_eq!(vertices[0].lon, Some(16.0));
     // The break vertex was written without geographic coordinates.
     assert_eq!(vertices[1].lon, None);
+    assert_eq!(vertices[1].z, None);
 
     let params = r.read_graphical_params().expect("reads");
     assert_eq!(params.len(), 1);
@@ -323,12 +287,24 @@ fn the_tables_added_after_v1_are_read_when_present() {
     assert!(params[0].params_json.contains("vertical_exaggeration"));
 
     let categories = r.read_source_categories().expect("reads");
-    assert_eq!(categories.len(), 2);
+    assert_eq!(categories.len(), 4);
+    // Ordered by kind, then by the position each class holds in its own legend.
+    assert_eq!(categories[0].data_kind, "line_intersections");
     assert_eq!(categories[0].category, "faglia");
-    assert_eq!(categories[0].color.as_deref(), Some("#ff0000"));
-    assert_eq!(categories[1].color, None);
+    assert_eq!(categories[0].color.as_deref(), Some("#d62728"));
+    // A class the source symbology gave no colour.
+    assert!(categories.iter().any(|c| c.color.is_none()));
+}
 
-    let _ = std::fs::remove_file(&path);
+#[test]
+fn the_two_fixtures_are_the_two_schema_versions_they_claim() {
+    // The tests above lean on which version each fixture is, so that is checked
+    // rather than assumed -- regenerating one against a newer exporter would
+    // otherwise quietly change what they cover.
+    let version = |r: &SqliteGeoProfileReader| r.read_result_sets().expect("readable")[0].schema_version;
+
+    assert_eq!(version(&reader()), 1);
+    assert_eq!(version(&v5_reader()), 5);
 }
 
 #[test]

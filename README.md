@@ -162,7 +162,11 @@ Everything else in `lib` — the geometries, the orientations, the mesh-grid
 intersection, the GeoProfiler SQLite reader — is reachable from Rust only.
 
 `geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
-it — and `lib/tests` runs that against a real one. The four added after schema
+it — and `lib/tests` runs that against two: a schema-v1 export of the Timpa San
+Lorenzo section, and a small v5 one written by qgSurf's own exporter through its
+public insert functions, regenerable with `lib/tests/data/make_export_synthetic_v5.py`.
+The two projects agree on a file format that nothing else spans, so the fixture
+is that agreement rather than a transcription of it. The four added after schema
 v1 (`gp_projected_focal_mechanisms`, `gp_profile_vertices`,
 `gp_graphical_params`, `gp_source_categories`) are read when present and come
 back empty when not, so one reader serves every export written so far.
