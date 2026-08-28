@@ -2,6 +2,10 @@
 /target
 /to_ingest
 
+# CI points CARGO_HOME here, because GitLab caches only what lies inside the
+# build directory.
+/.cargo
+
 __pycache__/
 *.py[cod]
 

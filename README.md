@@ -166,11 +166,15 @@ The setuptools-rust leftovers are gone: `features.rs`, the empty
 superseded by maturin and broken besides — `setup.py` used an `install_requires`
 it never defined.
 
+`.gitlab-ci.yml` runs the tests on Linux at every push, and builds the workspace
+and the examples. It stops there: it does not build wheels.
+
 Nothing yet builds wheels for anything but the host. A wheel built here is
 tagged `manylinux_2_34`, since the extension picks up the glibc it is compiled
 against, and will not install on Ubuntu 20.04, Debian 11 or RHEL 8. Wheels for
-macOS, Windows and aarch64 need CI, and there is none: the Travis configuration
-was dead and has been removed, and no GitLab equivalent has replaced it yet.
+macOS, Windows and aarch64 need runners for those platforms, which is a question
+about the GitLab plan rather than about the code, and until it is answered
+nothing in `lib` can reach a QGIS installation that is not this one.
 
 `docs/notebooks/misah.ipynb` calls an API that no longer exists
 (`misah.orientations.orien3d.Axis`) and does not run.

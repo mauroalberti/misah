@@ -1,0 +1,70 @@
+# Tests on Linux, at every push.
+#
+# This covers correctness only. It does not build the wheels the project exists
+# to ship: those need macOS, Windows and aarch64 runners, and are a separate
+# question from whether the code is right. What is here runs anywhere.
+
+default:
+  # The latest stable 1.x on Debian bookworm. Floating within the major version
+  # rather than pinned: this is a small crate on edition 2018/2021 with no
+  # nightly features, so a stable release breaking it is itself worth knowing
+  # about, and a pin would only defer finding out.
+  image: rust:1-bookworm
+  # A superseded pipeline has nothing left to say, so let a new push cancel it.
+  interruptible: true
+
+variables:
+  # GitLab caches only what sits inside the build directory, and cargo's home
+  # does not, hence the move.
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  CARGO_TERM_COLOR: always
+
+# One pipeline per change, not two: without this, a branch that has an open
+# merge request runs both a branch pipeline and a merge-request one.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+cache:
+  # Keyed on the lockfile: dependencies change only when it does, and a stale
+  # key would have every job recompile the whole tree.
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/registry/index
+    - .cargo/registry/cache
+    - target/
+
+stages:
+  - test
+
+# The kernel crate, which is where every test lives and which depends on no
+# interpreter. Kept apart from the workspace build for that reason: whatever
+# happens to the Python side, this job still says whether the geometry is
+# right.
+test:kernel:
+  stage: test
+  script:
+    - rustc --version && cargo --version
+    # --locked: build the dependency versions Cargo.lock records, and fail
+    # rather than quietly resolve new ones, so a green pipeline means the
+    # committed lockfile is the one that was tested.
+    - cargo test -p misah --locked
+    # The examples are how the kernels are run against the reference datasets,
+    # so they are worth compiling even though nothing imports them.
+    - cargo build -p misah --examples --locked
+
+# The whole workspace, pylib included, so that a break in the bindings does not
+# wait for a release to show itself.
+build:workspace:
+  stage: test
+  before_script:
+    # pyo3 wants an interpreter to configure the build, even for an abi3
+    # extension that deliberately links none of it.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3
+  script:
+    - cargo build --workspace --locked
