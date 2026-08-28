@@ -1,6 +1,7 @@
 
 /// GDAL-style affine transform: origin, then the two rows of the matrix, as
 /// `[x_origin, pixel_width, row_rotation, y_origin, col_rotation, pixel_height]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeoTransform {
     pub data: [f64; 6]
 }

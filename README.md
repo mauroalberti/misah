@@ -49,8 +49,8 @@ cargo run --release -p misah --example mesh_dem_vtk -- <dem.asc> <surface.vtk>
 
 `geometry::triangle::Triangle3D` and `geometry::mesh::TriangleMesh` carry the
 surface; the mesh is indexed (a vertex pool plus index triplets) because that is
-how a VTK `POLYDATA` file gives it. Reading VTK is left to the example, being no
-business of a raster kernel.
+how a VTK `POLYDATA` file gives it. The DEM is read by `raster::io`; reading VTK
+is left to the example, being no business of a raster module.
 
 Three things depart from the C++ deliberately:
 
@@ -152,8 +152,10 @@ installed package.
 
 ### Status
 
-`raster::io` does not compile and is not wired into the module tree, so the
-example carries its own ESRI ASCII reader.
+`raster::io` reads ESRI ASCII grids, which is what both examples now use; it is
+the only raster format handled, anything wider meaning GDAL. It returns the
+nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
+since at sea that is a depth and not a hole.
 
 The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
 Everything else in `lib` — the geometries, the orientations, the mesh-grid

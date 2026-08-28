@@ -7,66 +7,17 @@
 //! cargo run --release --example mesh_dem_vtk -- <dem.asc> <surface.vtk>
 //! ```
 //!
-//! It carries its own readers: `raster::io` does not compile yet and is not
-//! wired into the module tree, and reading VTK is no business of a raster
-//! kernel.
+//! The DEM comes through `raster::io`; the VTK reader lives here, reading a
+//! mesh being no business of a raster module.
 
 use std::env;
 use std::fs;
 use std::io::{BufWriter, Write};
 
-use ndarray::Array2;
-
 use misah::geometry::mesh::TriangleMesh;
 use misah::geometry::point::Point3D;
-use misah::raster::geotransform::GeoTransform;
-use misah::raster::grid::Grid;
+use misah::raster::io::read_esri_ascii_grid;
 use misah::raster::mesh_intersection::intersect_mesh_grid;
-
-fn read_esri_ascii(path: &str, epsg_code: i32) -> (Grid, f64) {
-
-    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {}", path, e));
-    let mut tokens = text.split_whitespace();
-
-    let mut header = std::collections::HashMap::new();
-    for _ in 0..6 {
-        let key = tokens.next().expect("truncated header").to_uppercase();
-        let value: f64 = tokens
-            .next()
-            .expect("header key without a value")
-            .parse()
-            .expect("header value is not a number");
-        header.insert(key, value);
-    }
-
-    let nrows = header["NROWS"] as usize;
-    let ncols = header["NCOLS"] as usize;
-    let cellsize = header["CELLSIZE"];
-
-    let values: Vec<f64> = tokens
-        .map(|t| t.parse::<f64>().expect("elevation is not a number"))
-        .collect();
-    assert_eq!(values.len(), nrows * ncols, "grid body does not match header");
-
-    let grid = Grid {
-        // ESRI ASCII gives the lower-left corner; a GDAL transform starts from
-        // the upper-left, so the origin moves up by the full height of the grid.
-        transform: GeoTransform {
-            data: [
-                header["XLLCORNER"],
-                cellsize,
-                0.0,
-                header["YLLCORNER"] + nrows as f64 * cellsize,
-                0.0,
-                -cellsize,
-            ],
-        },
-        epsg_code,
-        data: Array2::from_shape_vec((nrows, ncols), values).expect("shape matches header"),
-    };
-
-    (grid, header["NODATA_VALUE"])
-}
 
 /// Read an ASCII VTK `POLYDATA` surface made of triangle strips -- what qgSurf
 /// writes for a geological surface.
@@ -131,10 +82,11 @@ fn main() {
         std::process::exit(2);
     }
 
-    let (grid, nodata) = read_esri_ascii(&args[1], 32633);
+    let (grid, nodata) = read_esri_ascii_grid(&args[1], 32633)
+        .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1) });
     let mesh = read_vtk_triangle_strips(&args[2]);
 
-    let out = intersect_mesh_grid(&mesh, &grid, Some(nodata));
+    let out = intersect_mesh_grid(&mesh, &grid, nodata);
 
     let stdout = std::io::stdout();
     let mut w = BufWriter::new(stdout.lock());
