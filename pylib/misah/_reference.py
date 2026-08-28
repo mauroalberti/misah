@@ -9,19 +9,25 @@ It is also the oracle the Rust kernel is checked against: keeping a second,
 independent implementation is what makes `tests/test_kernels.py` able to say the
 two agree rather than merely that one of them runs.
 
-Mirrors `lib/src/raster/intersection.rs`. The intersection is the zero-level set
-of the signed distance
+`intersect_plane_grid`/`plane_normal` mirror `lib/src/raster/intersection.rs`.
+The intersection is the zero-level set of the signed distance
 
     f(x, y) = n . (X - P0),    X = (x, y, z_dem(x, y))
 
 sampled at the grid nodes and extracted by marching squares. Working on the
 signed distance rather than on a z = z(x, y) plane expression keeps vertical
 planes an ordinary case.
+
+`rake_to_slickenline`/`solve_stress` mirror `lib/src/structural/stress.rs` and
+the two structural primitives it drew out of `geol_axis.rs`/`geol_plane.rs` --
+trend/plunge <-> (East, North, Up), and the Aki & Richards (1980) rake formula.
+`solve_stress` is the direct (forward) Wallace-Bott problem: given a reduced
+stress tensor, predict the slip a fault plane would show under it.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -185,3 +191,197 @@ def intersect_plane_grid(
         np.array(points, dtype=float).reshape(-1, 3),
         np.array(segments, dtype=np.int64).reshape(-1, 2),
     )
+
+
+# Below this, a shear stress is numerical noise rather than a driving force --
+# the fault plane sits on, or acutely close to, a principal stress axis, and no
+# slip direction is defined.
+_SHEAR_MAGNITUDE_THRESHOLD = 1.0e-5
+
+# Tolerance, in degrees, on how far from exactly orthogonal S1 and S3 may be
+# and still be accepted.
+_AXIS_ORTHOGONALITY_TOLERANCE = 1.0
+
+
+def _axis_versor(trend_degr: float, plunge_degr: float) -> np.ndarray:
+    """Trend/plunge to a unit vector in (East, North, Up).
+
+    Same construction as `plane_normal`, at plunge `dip_angle - 90` from a
+    plane's dip azimuth/angle -- the two are not independent formulas kept in
+    sync by hand, they are the same trig applied to different angles.
+    """
+    trend, plunge = np.radians(trend_degr), np.radians(plunge_degr)
+    return np.array([
+        np.sin(trend) * np.cos(plunge),
+        np.cos(trend) * np.cos(plunge),
+        -np.sin(plunge),
+    ])
+
+
+def _versor_to_axis(v: Sequence[float]) -> Tuple[float, float]:
+    """The trend/plunge a unit vector points along: the inverse of `_axis_versor`."""
+    east, north, up = v
+    plunge = float(np.degrees(np.arcsin(np.clip(-up, -1.0, 1.0))))
+    trend = float(np.degrees(np.arctan2(east, north)))
+    if trend < 0.0:
+        trend += 360.0
+    return trend, plunge
+
+
+def _rhr_strike(dip_azimuth_degr: float) -> float:
+    return (dip_azimuth_degr - 90.0) % 360.0
+
+
+def _from_rhr_strike(strike_rhr_degr: float) -> float:
+    return (strike_rhr_degr + 90.0) % 360.0
+
+
+def rake_to_slickenline(
+    strike_rhr_degr: float, dip_angle_degr: float, rake_degr: float
+) -> Tuple[float, float]:
+    """The trend/plunge of a slickenline of the given rake, on a plane of the
+    given strike (right-hand rule) and dip.
+
+    Aki & Richards (1980)'s convention: rake 0 is left-lateral, 90 reverse,
+    +/-180 right-lateral, -90 normal. Unit length is an algebraic identity of
+    the formula (the strike terms cancel by sin^2 + cos^2 = 1, then so do the
+    dip ones), holding for every strike, dip and rake.
+    """
+    strike = np.radians(strike_rhr_degr)
+    dip = np.radians(dip_angle_degr)
+    rake = np.radians(rake_degr)
+
+    versor = np.array([
+        np.cos(rake) * np.sin(strike) - np.sin(rake) * np.cos(dip) * np.cos(strike),
+        np.cos(rake) * np.cos(strike) + np.sin(rake) * np.cos(dip) * np.sin(strike),
+        np.sin(rake) * np.sin(dip),
+    ])
+
+    return _versor_to_axis(versor)
+
+
+def solve_stress(
+    s1_trend_degr: float,
+    s1_plunge_degr: float,
+    s3_trend_degr: float,
+    s3_plunge_degr: float,
+    phi: float,
+    strike_rhr_degr: float,
+    dip_angle_degr: float,
+    sigma1: float = 1.0,
+    sigma3: float = 0.0,
+    shear_threshold: float = _SHEAR_MAGNITUDE_THRESHOLD,
+) -> Dict[str, object]:
+    """The direct (forward) Wallace-Bott problem: resolve a reduced stress
+    tensor onto one fault plane, predicting the slip it drives.
+
+    `s1`/`s3` are the principal stress axes as (trend, plunge) in degrees,
+    sub-orthogonal to within a degree; `phi` is the shape ratio
+    (sigma2 - sigma3) / (sigma1 - sigma3). `sigma1`/`sigma3` default to 1/0,
+    the usual normalization when only the tensor's shape is known, as from a
+    fault-slip inversion -- which leaves the predicted rake correct while
+    making `slip_tendency`/`deformation_index` meaningless; pass the true
+    magnitudes when they are known and those are wanted.
+
+    Returns a dict always carrying `is_valid`, `traction`, `traction_magnitude`,
+    `normal_stress`, `normal_stress_magnitude`, `shear_stress` and
+    `shear_stress_magnitude` (the last three vectors in (East, North, Up)),
+    plus `theoretical_rake`, `theoretical_slickenline` (a `(trend, plunge)`
+    pair), `slip_tendency` and `deformation_index`, `None` on all four where
+    the shear stress does not clear `shear_threshold`.
+
+    Follows Xu (2004), as `structural::stress::ReducedStressTensor::solve`
+    does; see that module for how this was checked against ForwardStress.f95,
+    the Fortran tool of Alberti (2010) it and this port both descend from.
+    """
+    s1 = _axis_versor(s1_trend_degr, s1_plunge_degr)
+    s3 = _axis_versor(s3_trend_degr, s3_plunge_degr)
+
+    angle = float(np.degrees(np.arccos(np.clip(np.dot(s1, s3), -1.0, 1.0))))
+    if abs(angle - 90.0) > _AXIS_ORTHOGONALITY_TOLERANCE:
+        raise ValueError(
+            f"S1 and S3 axes must be sub-orthogonal: {angle:.3f} degrees apart, "
+            f"expected within {_AXIS_ORTHOGONALITY_TOLERANCE:.3f} of 90"
+        )
+    if not (0.0 <= phi <= 1.0):
+        raise ValueError(f"Phi must be between 0 and 1, got {phi}")
+    if sigma1 <= sigma3:
+        raise ValueError(f"Sigma1 must be greater than Sigma3, got sigma1={sigma1}, sigma3={sigma3}")
+
+    # S3 cross S1, not S1 cross S3: this order is what makes S1, S2, S3 a
+    # right-handed cyclic triad (S1 x S2 = S3, S2 x S3 = S1), matching the
+    # Fortran original and the Rust port. The tensor itself does not depend
+    # on which way S2 points -- it enters only as S2 (x) S2 -- but a versor
+    # here still keeps the triad genuinely orthonormal for input merely
+    # sub-orthogonal within the tolerance above.
+    s2 = np.cross(s3, s1)
+    s2 = s2 / np.linalg.norm(s2)
+
+    sigma2 = phi * sigma1 + (1.0 - phi) * sigma3
+
+    r = np.column_stack([s1, s2, s3])
+    tensor = r @ np.diag([sigma1, sigma2, sigma3]) @ r.T
+
+    dip_azimuth = _from_rhr_strike(strike_rhr_degr)
+
+    # The forward-pointing normal -- upward for a shallow-dipping plane,
+    # horizontal for a vertical one -- rather than the downward-pointing
+    # normal_axis: the sign of every signed quantity below (traction, normal
+    # stress) is relative to this choice, so it is the one the theoretical
+    # rake further down is built consistently against.
+    n = np.array(plane_normal(dip_azimuth, dip_angle_degr))
+
+    traction = -(tensor @ n)
+    traction_magnitude = float(np.linalg.norm(traction))
+    if np.dot(n, traction) < 0.0:
+        traction_magnitude = -traction_magnitude
+
+    normal_scal = float(np.dot(n, traction))
+    normal_stress = n * normal_scal
+    normal_stress_magnitude = normal_scal
+
+    shear_stress = traction - normal_stress
+    shear_stress_magnitude = float(np.linalg.norm(shear_stress))
+
+    is_valid = shear_stress_magnitude > shear_threshold
+
+    theoretical_rake = None
+    theoretical_slickenline = None
+    slip_tendency = None
+    deformation_index = None
+
+    if is_valid:
+        shear_versor = shear_stress / shear_stress_magnitude
+
+        strike_versor = _axis_versor(strike_rhr_degr, 0.0)
+        dip_versor = _axis_versor(dip_azimuth, dip_angle_degr)
+
+        scal_strike = float(np.clip(np.dot(shear_versor, strike_versor), -1.0, 1.0))
+        scal_dip = float(np.dot(shear_versor, dip_versor))
+
+        rake = float(np.degrees(np.arccos(scal_strike)))
+        if scal_dip > 0.0:
+            rake = -rake
+
+        theoretical_slickenline = rake_to_slickenline(strike_rhr_degr, dip_angle_degr, rake)
+        theoretical_rake = rake
+
+        slip_tendency = shear_stress_magnitude / abs(traction_magnitude)
+        # abs() in the numerator alone, not the denominator: Xu (2004)'s index
+        # as the Fortran original carried it, and the asymmetry is kept
+        # rather than "fixed" -- see structural::stress in the Rust crate.
+        deformation_index = (abs(traction_magnitude) - shear_stress_magnitude) / traction_magnitude
+
+    return {
+        "is_valid": bool(is_valid),
+        "traction": tuple(float(c) for c in traction),
+        "traction_magnitude": traction_magnitude,
+        "normal_stress": tuple(float(c) for c in normal_stress),
+        "normal_stress_magnitude": normal_stress_magnitude,
+        "shear_stress": tuple(float(c) for c in shear_stress),
+        "shear_stress_magnitude": shear_stress_magnitude,
+        "theoretical_rake": theoretical_rake,
+        "theoretical_slickenline": theoretical_slickenline,
+        "slip_tendency": slip_tendency,
+        "deformation_index": deformation_index,
+    }

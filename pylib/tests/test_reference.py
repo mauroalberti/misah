@@ -122,12 +122,81 @@ def test_fallback_refuses_a_non_contiguous_dem():
     raise AssertionError("non-contiguous DEM was accepted")
 
 
+# The same five cases checked against ForwardStress.f95 itself in
+# structural::stress's own Rust tests; see there for how they were obtained.
+STRESS_CASES = [
+    dict(s1_trend_degr=0.0, s1_plunge_degr=90.0, s3_trend_degr=90.0, s3_plunge_degr=0.0,
+         phi=0.5, strike_rhr_degr=0.0, dip_angle_degr=60.0, sigma1=30.0, sigma3=10.0),
+    dict(s1_trend_degr=0.0, s1_plunge_degr=0.0, s3_trend_degr=90.0, s3_plunge_degr=0.0,
+         phi=0.3, strike_rhr_degr=30.0, dip_angle_degr=70.0, sigma1=40.0, sigma3=-10.0),
+    dict(s1_trend_degr=125.0, s1_plunge_degr=35.0, s3_trend_degr=125.0, s3_plunge_degr=-55.0,
+         phi=0.6, strike_rhr_degr=200.0, dip_angle_degr=50.0, sigma1=35.0, sigma3=5.0),
+    dict(s1_trend_degr=10.0, s1_plunge_degr=5.0, s3_trend_degr=10.0, s3_plunge_degr=-85.0,
+         phi=0.4, strike_rhr_degr=100.0, dip_angle_degr=85.0, sigma1=50.0, sigma3=-5.0),
+    dict(s1_trend_degr=0.0, s1_plunge_degr=90.0, s3_trend_degr=90.0, s3_plunge_degr=0.0,
+         phi=0.5, strike_rhr_degr=0.0, dip_angle_degr=0.0, sigma1=30.0, sigma3=10.0),
+]
+
+
+def test_stress_solutions_agree():
+    compiled, reference = _both()
+    if compiled is None:
+        print("SKIP  extension not installed")
+        return
+
+    for i, kwargs in enumerate(STRESS_CASES):
+        c = compiled.solve_stress(**kwargs)
+        r = reference.solve_stress(**kwargs)
+        assert c.keys() == r.keys(), (i, kwargs)
+        for key, cv in c.items():
+            rv = r[key]
+            if cv is None or rv is None:
+                assert cv is rv, (i, key, cv, rv)
+            elif isinstance(cv, bool):
+                assert cv == rv, (i, key, cv, rv)
+            elif isinstance(cv, tuple):
+                assert type(rv) is tuple, (i, key, cv, rv)
+                assert np.allclose(cv, rv, atol=1e-9), (i, key, cv, rv)
+            else:
+                assert np.isclose(cv, rv, atol=1e-9), (i, key, cv, rv)
+
+
+def test_rake_to_slickenline_agrees():
+    compiled, reference = _both()
+    if compiled is None:
+        print("SKIP  extension not installed")
+        return
+
+    for strike, dip, rake in ((0.0, 60.0, -90.0), (30.0, 70.0, -2.26), (200.0, 50.0, 43.56)):
+        assert np.allclose(
+            compiled.rake_to_slickenline(strike, dip, rake),
+            reference.rake_to_slickenline(strike, dip, rake),
+            atol=1e-9,
+        ), (strike, dip, rake)
+
+
+def test_fallback_reproduces_the_known_stress_results():
+    """The fallback alone must reach the figures the corrected Fortran
+    binary, and geogst's own port of it, established."""
+    from misah import _reference
+
+    sol = _reference.solve_stress(0.0, 90.0, 90.0, 0.0, 0.5, 0.0, 60.0, sigma1=30.0, sigma3=10.0)
+    assert sol["is_valid"] is True
+    assert np.isclose(sol["theoretical_rake"], -90.0)
+    assert np.allclose(sol["theoretical_slickenline"], (90.0, 60.0))
+
+    sol = _reference.solve_stress(0.0, 0.0, 90.0, 0.0, 0.3, 30.0, 70.0, sigma1=40.0, sigma3=-10.0)
+    assert np.isclose(sol["theoretical_rake"], -2.261611727892)
+
+
 def test_package_exposes_a_kernels_module_either_way():
     import misah
 
     assert hasattr(misah, "kernels")
     assert hasattr(misah.kernels, "intersect_plane_grid")
     assert hasattr(misah.kernels, "plane_normal")
+    assert hasattr(misah.kernels, "rake_to_slickenline")
+    assert hasattr(misah.kernels, "solve_stress")
     assert isinstance(misah.is_compiled, bool)
 
 

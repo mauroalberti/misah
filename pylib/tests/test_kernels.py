@@ -114,6 +114,96 @@ def test_non_contiguous_dem_is_refused():
     raise AssertionError("non-contiguous DEM was accepted")
 
 
+# Five cases checked against ForwardStress.f95 itself -- the same ones, and the
+# same values, structural::stress's own Rust tests and geogst's port of the
+# same tool are checked against; see either for how they were obtained (the
+# modules up to stress_processing compiled unmodified with gfortran, a small
+# driver calling stresssolution_calc directly) and for the implicit-none bug
+# in the 2010 source that separates cases 2 and 3 here from the binary as it
+# stands rather than as corrected.
+def test_solve_stress_case_1_anderson_normal():
+    from misah.kernels import solve_stress
+
+    sol = solve_stress(0.0, 90.0, 90.0, 0.0, 0.5, 0.0, 60.0, sigma1=30.0, sigma3=10.0)
+
+    assert sol["is_valid"] is True
+    assert np.isclose(sol["traction_magnitude"], -17.320508075689)
+    assert np.isclose(sol["normal_stress_magnitude"], -15.0)
+    assert np.isclose(sol["shear_stress_magnitude"], 8.660254037844)
+    assert np.isclose(sol["theoretical_rake"], -90.0)
+    assert np.allclose(sol["theoretical_slickenline"], (90.0, 60.0))
+    assert np.isclose(sol["slip_tendency"], 0.5)
+    assert np.isclose(sol["deformation_index"], -0.5)
+
+
+def test_solve_stress_case_2_oblique():
+    from misah.kernels import solve_stress
+
+    sol = solve_stress(0.0, 0.0, 90.0, 0.0, 0.3, 30.0, 70.0, sigma1=40.0, sigma3=-10.0)
+
+    assert sol["is_valid"] is True
+    assert np.isclose(sol["traction_magnitude"], -20.551398971889)
+    assert np.isclose(sol["normal_stress_magnitude"], -2.792444446101)
+    assert np.isclose(sol["shear_stress_magnitude"], 20.360801892784)
+    assert np.isclose(sol["theoretical_rake"], -2.261611727892)
+    assert np.allclose(sol["theoretical_slickenline"], (30.773871690337, 2.125155259309))
+    assert np.isclose(sol["slip_tendency"], 0.990725834316)
+    assert np.isclose(sol["deformation_index"], -0.009274165684)
+
+
+def test_solve_stress_case_3_plunging_axes():
+    from misah.kernels import solve_stress
+
+    sol = solve_stress(125.0, 35.0, 125.0, -55.0, 0.6, 200.0, 50.0, sigma1=35.0, sigma3=5.0)
+
+    assert sol["is_valid"] is True
+    assert np.isclose(sol["traction_magnitude"], -34.425635706498)
+    assert np.isclose(sol["normal_stress_magnitude"], -34.215382549860)
+    assert np.isclose(sol["shear_stress_magnitude"], 3.798946006885)
+    assert np.isclose(sol["theoretical_rake"], 43.558963074529)
+    assert np.allclose(sol["theoretical_slickenline"], (168.565012691676, -31.862445102249))
+    assert np.isclose(sol["slip_tendency"], 0.110352239804)
+    assert np.isclose(sol["deformation_index"], -0.889647760196)
+
+
+def test_solve_stress_case_4_and_5_are_degenerate():
+    """The fault normal falls on a principal axis: pure normal loading, no
+    direction defined."""
+    from misah.kernels import solve_stress
+
+    sol4 = solve_stress(10.0, 5.0, 10.0, -85.0, 0.4, 100.0, 85.0, sigma1=50.0, sigma3=-5.0)
+    sol5 = solve_stress(0.0, 90.0, 90.0, 0.0, 0.5, 0.0, 0.0, sigma1=30.0, sigma3=10.0)
+
+    for sol, traction_magn in ((sol4, -50.0), (sol5, -30.0)):
+        assert sol["is_valid"] is False
+        assert np.isclose(sol["traction_magnitude"], traction_magn)
+        assert np.isclose(sol["normal_stress_magnitude"], traction_magn)
+        assert abs(sol["shear_stress_magnitude"]) < 1e-9
+        assert sol["theoretical_rake"] is None
+        assert sol["theoretical_slickenline"] is None
+        assert sol["slip_tendency"] is None
+        assert sol["deformation_index"] is None
+
+
+def test_solve_stress_rejects_non_orthogonal_axes():
+    from misah.kernels import solve_stress
+
+    try:
+        solve_stress(0.0, 0.0, 45.0, 0.0, 0.5, 0.0, 60.0)
+    except ValueError:
+        return
+    raise AssertionError("non-orthogonal S1/S3 axes were accepted")
+
+
+def test_rake_to_slickenline_minus_90_is_pure_normal_dip_slip():
+    """Rake -90 (Aki & Richards) points straight down the dip vector."""
+    from misah.kernels import rake_to_slickenline
+
+    trend, plunge = rake_to_slickenline(0.0, 60.0, -90.0)
+    assert np.isclose(trend, 90.0)
+    assert np.isclose(plunge, 60.0)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

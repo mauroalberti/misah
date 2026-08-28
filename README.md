@@ -158,6 +158,14 @@ performance case of its own, but it is the exact inner loop a grid search over
 candidate tensors would evaluate, at whatever count of faults and grid points
 made that search worth compiling.
 
+`solve_stress` and `rake_to_slickenline`, in `pylib`, are the Python surface of
+this — one call each, taking and returning plain numbers rather than exposing
+`ReducedStressTensor`/`GeologicalAxis`/`GeologicalPlane` themselves, matching
+how `intersect_plane_grid` already builds and consumes a `GeologicalPlane`
+without handing the type to the caller. Both have a pure-Python mirror in
+`misah/_reference.py`, checked against the compiled kernel over the same five
+Fortran-verified cases.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
@@ -193,6 +201,20 @@ points, segments = intersect_plane_grid(
 )
 ```
 
+```python
+from misah.kernels import solve_stress
+
+solution = solve_stress(
+    0.0, 90.0,    # S1: trend, plunge
+    90.0, 0.0,    # S3: trend, plunge
+    0.5,          # Phi
+    0.0, 60.0,    # fault: RHR strike, dip angle
+    sigma1=30.0, sigma3=10.0,   # optional; default 1/0 leaves the rake correct
+)
+solution["theoretical_rake"]           # -90.0: pure normal dip-slip
+solution["theoretical_slickenline"]    # (90.0, 60.0), down the dip vector
+```
+
 The extension is built as `misah._misah`, so its submodules register themselves
 under that name; `misah/__init__.py` aliases them, which is what makes
 `import misah.kernels` work rather than only `misah._misah.kernels`.
@@ -207,8 +229,10 @@ takes about 300 ms against the 1 ms of the compiled kernel, the gap being the
 per-cell Python loop rather than the algorithm.
 
 Keeping a second implementation also buys the tests an oracle:
-`tests/test_reference.py` compares the two elementwise over four attitudes, and
-so can say they agree rather than merely that one of them runs.
+`tests/test_reference.py` compares the two elementwise — over four attitudes for
+the plane-grid kernel, and over the same five stress cases checked against the
+Fortran original — and so can say they agree rather than merely that one of
+them runs.
 
 Run the tests from anywhere except `pylib` itself, whose source tree shadows the
 installed package.
@@ -220,10 +244,14 @@ the only raster format handled, anything wider meaning GDAL. It returns the
 nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
 since at sea that is a depth and not a hole.
 
-The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
-Everything else in `lib` — the geometries, the orientations, the mesh-grid
-intersection, the forward stress solution, the GeoProfiler SQLite reader — is
-reachable from Rust only.
+The Python surface is four functions: `intersect_plane_grid` and `plane_normal`
+for the raster side, `solve_stress` and `rake_to_slickenline` for the
+structural side. Everything else in `lib` — the geometries, the mesh-grid
+intersection, `ReducedStressTensor` and its own properties (`s1_versor`,
+`tensor`, ...), the GeoProfiler SQLite reader — is reachable from Rust only;
+`solve_stress` builds and solves a tensor in one call rather than exposing the
+type itself, matching how `intersect_plane_grid` builds and intersects a plane
+in one call rather than exposing `GeologicalPlane`.
 
 `geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
 it — and `lib/tests` runs that against two: a schema-v1 export of the Timpa San
