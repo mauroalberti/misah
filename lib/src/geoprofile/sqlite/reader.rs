@@ -76,10 +76,15 @@ impl SqliteGeoProfileReader {
             Ok(ResultSetRecord {
                 result_set_id: row.get(0)?,
                 name: row.get(1)?,
-                description: row.get(2)?,
+                // DEFAULT '' in the export schema, so the format's own way of
+                // saying "nothing here" is the empty string. NULL is still
+                // storable, though, and reading it straight into a String would
+                // fail the whole read on one stray value; it maps to the empty
+                // string the column would have held anyway.
+                description: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 created_utc: row.get(3)?,
                 schema_version: row.get(4)?,
-                distance_units: row.get(5)?,
+                distance_units: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 extra_json: row.get(6)?,
             })
         })?;
@@ -113,7 +118,8 @@ impl SqliteGeoProfileReader {
                     profile_id: row.get(0)?,
                     result_set_id: row.get(1)?,
                     source_profile_fid: row.get(2)?,
-                    profile_name: row.get(3)?,
+                    // DEFAULT '' in the export schema; see read_result_sets.
+                    profile_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
                     wkt_crs: row.get(4)?,
                     s_max: row.get(5)?,
                     z_min: row.get(6)?,
@@ -294,8 +300,7 @@ impl SqliteGeoProfileReader {
                 rec_id,
                 profile_id,
                 feat_category,
-                s_from,
-                s_to,
+                s,
                 extra_json
             FROM gp_intersected_lines
             ORDER BY profile_id, s, rec_id
@@ -305,14 +310,24 @@ impl SqliteGeoProfileReader {
         let rows = stmt.query_map(
             [],
             |row| {
+                // A line crosses the section at one point, so the span is
+                // degenerate and both ends carry that distance. The exception is
+                // a segment lying along the section trace, which is crossed over
+                // a stretch -- but the export gives no way to recover it: the
+                // exporter writes the two ends of such a stretch as two ordinary
+                // rows, indistinguishable from two separate crossings of the
+                // same category. Reading a row as a span from itself is
+                // therefore all this table supports.
+                let s: f64 = row.get(3)?;
+
                 Ok(
                     IntersectionRecord {
                         rec_id: row.get(0)?,
                         profile_id: row.get(1)?,
                         category: row.get(2)?,
-                        s_from: row.get(3)?,
-                        s_to: row.get(4)?,
-                        extra_json: row.get(5)?,
+                        s_from: s,
+                        s_to: s,
+                        extra_json: row.get(4)?,
                     }
                 )
             }
@@ -381,8 +396,9 @@ impl SqliteGeoProfileReader {
                     source_id: row.get(0)?,
                     result_set_id: row.get(1)?,
                     source_type: row.get(2)?,
-                    source_name: row.get(3)?,
-                    source_uri: row.get(4)?,
+                    // Both DEFAULT '' in the export schema; see read_result_sets.
+                    source_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    source_uri: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
                     wkt_crs: row.get(5)?,
                     parameters_json: row.get(6)?,
                 })

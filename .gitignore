@@ -18,3 +18,8 @@ __pycache__/
 
 # Jupyter writes these beside the notebook and they duplicate it wholesale.
 .ipynb_checkpoints/
+
+# A GeoProfiler export carries journal_mode=WAL, so merely opening the test
+# fixture -- read-only at that -- drops these beside it.
+*.gpkg-shm
+*.gpkg-wal
