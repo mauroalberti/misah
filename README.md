@@ -161,19 +161,18 @@ The Python surface is two functions, `intersect_plane_grid` and `plane_normal`.
 Everything else in `lib` — the geometries, the orientations, the mesh-grid
 intersection, the GeoProfiler SQLite reader — is reachable from Rust only.
 
-`geoprofile::sqlite` reads a qgSurf GeoProfiler export, and `lib/tests` now runs
-it against a real one. It reads nine of the thirteen tables the exporter writes:
-`gp_profile_vertices`, `gp_graphical_params`, `gp_source_categories` and
-`gp_projected_focal_mechanisms` are passed over. The last of those is the one
-that is geology rather than presentation — projected focal mechanisms, with
-strike, dip and rake — and it is the obvious next thing to read.
+`geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
+it — and `lib/tests` runs that against a real one. The four added after schema
+v1 (`gp_projected_focal_mechanisms`, `gp_profile_vertices`,
+`gp_graphical_params`, `gp_source_categories`) are read when present and come
+back empty when not, so one reader serves every export written so far.
 
-One limit belongs to the export rather than to the reader. A line generally
-crosses a section at a point, but a segment lying along the section trace
-crosses it over a stretch; `gp_intersected_lines` stores a single distance per
-row, and the exporter writes such a stretch as two ordinary rows, which nothing
-downstream can tell from two separate crossings. `gp_intersected_polygons`
-records `s_from` and `s_to` and has no such trouble.
+A line intersection needs both shapes. A line generally crosses a section at a
+point, but a segment lying along the section trace crosses it over a stretch;
+until qgSurf's schema v5 the table stored a single distance and such a stretch
+was written as two ordinary rows, indistinguishable afterwards from two separate
+crossings. v5 records `s_from` and `s_to`, as `gp_intersected_polygons` always
+has. Both are read: the older column becomes the degenerate span it stands for.
 
 The setuptools-rust leftovers are gone: `features.rs`, the empty
 `georeferenced.rs` and `orientations.rs`, and `setup.py` with `MANIFEST.in`,

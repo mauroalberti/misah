@@ -7,11 +7,13 @@
 //! had: schema validation asks for the right ones, the SELECT asked for the
 //! polygon table's, and nothing ever ran the two against each other.
 //!
-//! The fixture declares `schema_version = 1`; qgSurf writes 4 now, which is
-//! what the last test here is about.
+//! The fixture declares `schema_version = 1`; qgSurf writes 5 now. Versions 2
+//! to 4 only added tables, and v5 changed how a line intersection records its
+//! position, so several tests here are about reading both shapes.
 
 use std::path::PathBuf;
 
+use misah::geoprofile::records::vertex::VertexKind;
 use misah::geoprofile::sqlite::reader::SqliteGeoProfileReader;
 
 fn fixture() -> PathBuf {
@@ -152,12 +154,12 @@ fn polygon_intersections_are_ordered_spans_within_their_profile() {
 }
 
 #[test]
-fn a_line_intersection_reads_as_a_span_from_its_own_distance() {
-    // gp_intersected_lines stores one distance per row, so both ends of the
-    // record hold it. The fixture has no rows, so the mapping is checked on a
-    // copy with one inserted -- also the only coverage this table gets, since
-    // its emptiness is what let a broken query survive.
-    let path = temp_copy("misah_geoprofile_lines.gpkg");
+fn a_pre_v5_line_intersection_reads_as_a_degenerate_span() {
+    // This fixture predates schema v5, so its gp_intersected_lines holds one
+    // distance per row and the reader must present it as the span it stands
+    // for. The table is empty here, hence the inserted row -- and its emptiness
+    // is exactly what let a broken query survive in the first place.
+    let path = temp_copy("misah_geoprofile_lines_v1.gpkg");
 
     {
         let conn = rusqlite::Connection::open(&path).expect("the copy opens");
@@ -178,6 +180,183 @@ fn a_line_intersection_reads_as_a_span_from_its_own_distance() {
     assert_eq!(lines[0].s_from, 1234.5);
     assert_eq!(lines[0].s_to, 1234.5);
     assert_eq!(lines[0].category.as_deref(), Some("faglia"));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_v5_line_intersection_keeps_the_span_it_covers() {
+    // From v5 the table records s_from and s_to. A crossing is a degenerate
+    // span; a segment lying along the section trace covers a real one, which is
+    // what the older single column could not say.
+    let path = temp_copy("misah_geoprofile_lines_v5.gpkg");
+
+    {
+        let conn = rusqlite::Connection::open(&path).expect("the copy opens");
+        conn.execute("DROP TABLE gp_intersected_lines", []).expect("writable");
+        conn.execute(
+            "CREATE TABLE gp_intersected_lines (
+                 rec_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 profile_id INTEGER NOT NULL,
+                 feat_category TEXT DEFAULT '',
+                 s_from REAL NOT NULL,
+                 s_to REAL NOT NULL,
+                 extra_json TEXT DEFAULT NULL)",
+            [],
+        )
+        .expect("writable");
+        conn.execute(
+            "INSERT INTO gp_intersected_lines(profile_id, feat_category, s_from, s_to)
+             SELECT profile_id, 'faglia', 200.0, 250.0 FROM gp_profiles LIMIT 1",
+            [],
+        )
+        .expect("writable");
+        conn.execute(
+            "INSERT INTO gp_intersected_lines(profile_id, feat_category, s_from, s_to)
+             SELECT profile_id, 'contatto', 300.0, 300.0 FROM gp_profiles LIMIT 1",
+            [],
+        )
+        .expect("writable");
+    }
+
+    let r = SqliteGeoProfileReader::open(&path).expect("opens");
+    r.validate_schema().expect("the span form is a valid export");
+
+    let lines = r.read_line_intersections().expect("reads");
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!((lines[0].s_from, lines[0].s_to), (200.0, 250.0));
+    assert_eq!((lines[1].s_from, lines[1].s_to), (300.0, 300.0));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_tables_added_after_v1_come_back_empty_rather_than_failing() {
+    // gp_projected_focal_mechanisms, gp_profile_vertices, gp_graphical_params
+    // and gp_source_categories arrived with schema v2 to v4. A file written
+    // before them is not a malformed one.
+    let r = reader();
+
+    assert!(r.read_projected_focal_mechanisms().expect("absent, not broken").is_empty());
+    assert!(r.read_profile_vertices().expect("absent, not broken").is_empty());
+    assert!(r.read_graphical_params().expect("absent, not broken").is_empty());
+    assert!(r.read_source_categories().expect("absent, not broken").is_empty());
+
+    let dataset = r.read_all().expect("and read_all does not fall over them");
+    assert!(dataset.projected_focal_mechanisms.is_empty());
+    assert!(dataset.profile_vertices.is_empty());
+}
+
+#[test]
+fn the_tables_added_after_v1_are_read_when_present() {
+    let path = temp_copy("misah_geoprofile_v4_tables.gpkg");
+
+    {
+        let conn = rusqlite::Connection::open(&path).expect("the copy opens");
+        conn.execute_batch(
+            "CREATE TABLE gp_projected_focal_mechanisms (
+                 rec_id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL,
+                 label TEXT DEFAULT '', s REAL NOT NULL, z REAL NOT NULL,
+                 strike REAL NOT NULL, dip REAL NOT NULL, rake REAL NOT NULL,
+                 profile_azimuth REAL NOT NULL, dist_to_profile REAL, src_x REAL,
+                 src_y REAL, src_z REAL, src_fid INTEGER, extra_json TEXT);
+             CREATE TABLE gp_profile_vertices (
+                 vertex_id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL,
+                 vertex_ndx INTEGER NOT NULL, kind TEXT NOT NULL, s REAL NOT NULL,
+                 x REAL NOT NULL, y REAL NOT NULL, lon REAL, lat REAL, z REAL,
+                 extra_json TEXT);
+             CREATE TABLE gp_graphical_params (
+                 params_id INTEGER PRIMARY KEY AUTOINCREMENT, result_set_id INTEGER NOT NULL,
+                 profile_id INTEGER, params_json TEXT NOT NULL);
+             CREATE TABLE gp_source_categories (
+                 category_id INTEGER PRIMARY KEY AUTOINCREMENT, result_set_id INTEGER NOT NULL,
+                 data_kind TEXT NOT NULL, position INTEGER NOT NULL, category TEXT NOT NULL,
+                 color TEXT);
+
+             INSERT INTO gp_projected_focal_mechanisms
+                 (profile_id, label, s, z, strike, dip, rake, profile_azimuth,
+                  dist_to_profile, src_x, src_y, src_z, src_fid)
+             SELECT profile_id, 'ML 4.3', 1500.0, -8000.0, 135.0, 60.0, -90.0, 45.0,
+                    120.0, 600000.0, 4440000.0, -8000.0, 7 FROM gp_profiles LIMIT 1;
+
+             INSERT INTO gp_profile_vertices (profile_id, vertex_ndx, kind, s, x, y, lon, lat, z)
+             SELECT profile_id, 0, 'start', 0.0, 600000.0, 4440000.0, 16.0, 40.1, 850.0
+             FROM gp_profiles LIMIT 1;
+             INSERT INTO gp_profile_vertices (profile_id, vertex_ndx, kind, s, x, y, lon, lat, z)
+             SELECT profile_id, 1, 'break', 500.0, 600400.0, 4440300.0, NULL, NULL, NULL
+             FROM gp_profiles LIMIT 1;
+
+             INSERT INTO gp_graphical_params (result_set_id, profile_id, params_json)
+             VALUES (1, NULL, '{\"vertical_exaggeration\": 2}');
+
+             INSERT INTO gp_source_categories (result_set_id, data_kind, position, category, color)
+             VALUES (1, 'line_intersections', 0, 'faglia', '#ff0000'),
+                    (1, 'line_intersections', 1, 'contatto', NULL);",
+        )
+        .expect("the copy is writable");
+    }
+
+    let r = SqliteGeoProfileReader::open(&path).expect("opens");
+
+    let mechanisms = r.read_projected_focal_mechanisms().expect("reads");
+    assert_eq!(mechanisms.len(), 1);
+    assert_eq!(mechanisms[0].base.category.as_deref(), Some("ML 4.3"));
+    assert_eq!(mechanisms[0].data.strike, 135.0);
+    assert_eq!(mechanisms[0].data.rake, -90.0);
+    assert_eq!(mechanisms[0].data.profile_azimuth, 45.0);
+    // src_x/y/z are present, so they become a point rather than three options.
+    assert!(mechanisms[0].base.src_point.is_some());
+
+    let vertices = r.read_profile_vertices().expect("reads");
+    assert_eq!(vertices.len(), 2);
+    assert_eq!(vertices[0].kind, VertexKind::Start);
+    assert_eq!(vertices[1].kind, VertexKind::Break);
+    assert_eq!(vertices[0].lon, Some(16.0));
+    // The break vertex was written without geographic coordinates.
+    assert_eq!(vertices[1].lon, None);
+
+    let params = r.read_graphical_params().expect("reads");
+    assert_eq!(params.len(), 1);
+    // NULL profile_id: the styles belong to the whole result set.
+    assert_eq!(params[0].profile_id, None);
+    assert!(params[0].params_json.contains("vertical_exaggeration"));
+
+    let categories = r.read_source_categories().expect("reads");
+    assert_eq!(categories.len(), 2);
+    assert_eq!(categories[0].category, "faglia");
+    assert_eq!(categories[0].color.as_deref(), Some("#ff0000"));
+    assert_eq!(categories[1].color, None);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_unknown_vertex_kind_is_reported_as_bad_data() {
+    // The export constrains kind to start/break/end, so anything else did not
+    // come from GeoProfiler and should say so rather than be quietly mapped.
+    let path = temp_copy("misah_geoprofile_bad_vertex.gpkg");
+
+    {
+        let conn = rusqlite::Connection::open(&path).expect("the copy opens");
+        conn.execute_batch(
+            "CREATE TABLE gp_profile_vertices (
+                 vertex_id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id INTEGER NOT NULL,
+                 vertex_ndx INTEGER NOT NULL, kind TEXT NOT NULL, s REAL NOT NULL,
+                 x REAL NOT NULL, y REAL NOT NULL, lon REAL, lat REAL, z REAL,
+                 extra_json TEXT);
+             INSERT INTO gp_profile_vertices (profile_id, vertex_ndx, kind, s, x, y)
+             VALUES (1, 0, 'middle', 0.0, 1.0, 2.0);",
+        )
+        .expect("writable");
+    }
+
+    let err = SqliteGeoProfileReader::open(&path)
+        .expect("opens")
+        .read_profile_vertices()
+        .unwrap_err();
+
+    assert!(format!("{}", err).contains("middle"), "unexpected error: {}", err);
 
     let _ = std::fs::remove_file(&path);
 }
