@@ -162,9 +162,8 @@ made that search worth compiling.
 this — one call each, taking and returning plain numbers rather than exposing
 `ReducedStressTensor`/`GeologicalAxis`/`GeologicalPlane` themselves, matching
 how `intersect_plane_grid` already builds and consumes a `GeologicalPlane`
-without handing the type to the caller. Both have a pure-Python mirror in
-`misah/_reference.py`, checked against the compiled kernel over the same five
-Fortran-verified cases.
+without handing the type to the caller. Both are checked from Python against
+the same five Fortran-verified cases.
 
 ## Fault-slip inversion
 
@@ -207,11 +206,11 @@ The test that matters generates faults from a known tensor through the forward
 model and asks the inversion to recover it, which it does to within the grid
 step for a vertical-S1 and for a strike-slip setting alike.
 
-Not exposed to Python. Every function in `misah.kernels` carries a pure-Python
-mirror in `_reference.py`, which is what lets the tests say the two agree rather
-than that one of them runs; a grid search rewritten in numpy would be the one
-place that rule costs more than it returns, and it is also the one function
-where the compiled version is the entire point.
+Not yet exposed to Python — the one part of the structural side that is not.
+The search is where being compiled matters most, so it is the obvious next
+binding; what it needs first is a decision about its own shape, since a caller
+handing over a hundred faults wants to pass arrays rather than build a hundred
+objects across the boundary.
 
 ## Python bindings
 
@@ -249,6 +248,21 @@ points, segments = intersect_plane_grid(
 ```
 
 ```python
+from misah.kernels import intersect_mesh_grid
+
+# vertices (V, 3) and faces (F, 3) as a VTK POLYDATA file gives them
+points, attitudes, mesh_triangles, stats = intersect_mesh_grid(
+    np.ascontiguousarray(dem),
+    geotransform,
+    vertices,
+    faces,
+    nodata,
+)
+attitudes[0]        # (dip direction, dip angle) of the triangle that cut here
+stats["duplicate_crossings"]
+```
+
+```python
 from misah.kernels import solve_stress
 
 solution = solve_stress(
@@ -266,25 +280,36 @@ The extension is built as `misah._misah`, so its submodules register themselves
 under that name; `misah/__init__.py` aliases them, which is what makes
 `import misah.kernels` work rather than only `misah._misah.kernels`.
 
-Where the extension cannot be built or installed, `misah.kernels` is instead the
-pure-Python `misah/_reference.py`, under the same names and returning the same
-arrays; `misah.is_compiled` says which one answered. QGIS is the case this exists
-for: a plugin neither picks the interpreter it is loaded into nor can count on a
-binary wheel installing, and vendoring — which is how qgSurf carries geogst —
-works for Python and not for a compiled extension. On the Malpi DEM the fallback
-takes about 300 ms against the 1 ms of the compiled kernel, the gap being the
-per-cell Python loop rather than the algorithm.
+There is no pure-Python fallback. There was one, `misah/_reference.py`,
+mirroring every exposed kernel so that `misah.kernels` answered either way and
+`misah.is_compiled` said which; it is gone, deliberately.
 
-Keeping a second implementation also buys the tests an oracle: they compare the
-two elementwise — `tests/test_reference.py` over four attitudes of the
-plane-grid kernel, `tests/test_stress.py` over the five stress cases checked
-against the Fortran original — and so can say they agree rather than merely
-that one of them runs.
+It cost a second independent implementation of every function exposed, and that
+price is what kept the mesh-grid intersection unexposed for as long as it was:
+marching triangles over a spatially indexed DEM is not something worth writing
+twice, so the rule that was meant to protect the bindings was instead deciding
+which half of the library Python could reach. Dropping it is what let
+`intersect_mesh_grid` above be exposed at all.
 
-The three files split by what they need, not by what they cover.
-`test_stress.py` is numbers in, numbers out, so it runs in CI; `test_kernels.py`
-and `test_reference.py` read the Malpi crop from the geoSurfDEM repository and
-run by hand. The DEM committed under `example_data` is a wider crop of the same
+What it bought was real and is worth naming: an oracle. Two implementations
+written from the same formulas, compared elementwise, can say they *agree*
+rather than that one of them runs — and it earned its keep, catching
+`solve_stress` returning its vectors as lists from one side and tuples from the
+other. In its place the bindings are checked against the datasets the kernels
+were ported from: the geoSurfDEM golden trace for the raster ones, the five
+Fortran-verified cases for the stress ones, and expected values rather than
+mutual agreement throughout.
+
+What it also bought, and this is the loss: a QGIS plugin that cannot install a
+binary wheel could still use misah, slowly. It now cannot use it at all. That
+is the same problem as the wheels, and belongs there — building for the
+platforms QGIS runs on — rather than in a second implementation of everything
+kept in reserve.
+
+The test files split by what they need, not by what they cover.
+`test_stress.py` and `test_mesh.py` are numbers in, numbers out, so both run in
+CI; `test_kernels.py` reads the Malpi crop from the geoSurfDEM repository and
+runs by hand. The DEM committed under `example_data` is a wider crop of the same
 ASTER tile — 213x260 against 200x247 — so it cannot stand in without rewriting
 the vertex counts those tests assert.
 
@@ -304,14 +329,18 @@ that nothing yet computes with — the next thing in this direction, and the one
 `structural::stress` would extend to, focal mechanisms being fault-slip data
 that arrives already reduced to a plane and a rake.
 
-The Python surface is four functions: `intersect_plane_grid` and `plane_normal`
-for the raster side, `solve_stress` and `rake_to_slickenline` for the
-structural side. Everything else in `lib` — the geometries, the mesh-grid
-intersection, `ReducedStressTensor` and its own properties (`s1_versor`,
-`tensor`, ...), the GeoProfiler SQLite reader — is reachable from Rust only;
-`solve_stress` builds and solves a tensor in one call rather than exposing the
-type itself, matching how `intersect_plane_grid` builds and intersects a plane
-in one call rather than exposing `GeologicalPlane`.
+The Python surface is five functions: `intersect_plane_grid`,
+`intersect_mesh_grid` and `plane_normal` for the raster side, `solve_stress`
+and `rake_to_slickenline` for the structural side. Each builds and consumes the
+types it needs within the one call rather than handing them across the
+boundary, so the surface stays plain arrays and numbers in, arrays and dicts
+out.
+
+What remains Rust-only is `structural::inversion`, and the GeoProfiler SQLite
+reader. The reader is a different case from the others: Python has `sqlite3` in
+its standard library and can read a GeoProfiler export directly, so the Rust
+reader exists for Rust callers rather than standing between Python and the
+data.
 
 `geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
 it — and `lib/tests` runs that against two: a schema-v1 export of the Timpa San

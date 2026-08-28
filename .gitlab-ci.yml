@@ -95,17 +95,16 @@ lint:clippy:
 # The Python bindings, actually imported and called rather than merely compiled.
 #
 # `build:workspace` proves the extension builds; it says nothing about whether
-# `import misah` finds it, whether the pure-Python fallback agrees with it, or
-# whether a pyo3 signature default resolves. Those are separate claims, and the
-# first thing this suite ever caught was one of them: solve_stress returned its
-# vectors as lists from the compiled side and tuples from the fallback.
+# `import misah` finds it, whether array shapes and index handling survive the
+# boundary, or whether a pyo3 signature default resolves. Those are separate
+# claims, and this suite has already caught one of them.
 #
-# Only `test_stress.py` runs here. `test_kernels.py` and `test_reference.py`
-# read the Malpi crop from the geoSurfDEM repository, which is not in this tree
-# and whose row and column counts their expected vertex counts depend on; the
-# DEM committed under `example_data` is a wider crop of the same ASTER tile, so
-# it cannot stand in without rewriting those numbers. Until one of the two is
-# resolved, the raster bindings stay verified by hand.
+# The two data-free suites run here. `test_kernels.py` reads the Malpi crop
+# from the geoSurfDEM repository, which is not in this tree and whose row and
+# column counts its expected vertex counts depend on; the DEM committed under
+# `example_data` is a wider crop of the same ASTER tile, so it cannot stand in
+# without rewriting those numbers. Until one of the two is resolved, the raster
+# bindings stay verified by hand.
 test:python:
   stage: test
   before_script:
@@ -124,3 +123,4 @@ test:python:
     # From the repository root, never from pylib, whose source tree shadows the
     # installed package.
     - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py

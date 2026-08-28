@@ -118,6 +118,14 @@ def test_non_contiguous_dem_is_refused():
     raise AssertionError("non-contiguous DEM was accepted")
 
 
+def test_package_exposes_the_raster_kernels():
+    import misah
+
+    assert hasattr(misah, "kernels")
+    for name in ("intersect_plane_grid", "plane_normal", "intersect_mesh_grid"):
+        assert hasattr(misah.kernels, name), name
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

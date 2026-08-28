@@ -1,10 +1,9 @@
-"""Check the forward-stress bindings: compiled, fallback, and their agreement.
+"""Check the forward-stress bindings against the Fortran-verified values.
 
-Apart from the other two test files in that it needs no data: everything here
-is numbers in, numbers out, so it is the one Python suite the CI can run
-without a DEM from another repository. `test_kernels.py` and
-`test_reference.py` both read the geoSurfDEM Malpi crop, which lives outside
-this tree, and so still run only by hand.
+Apart from the other test file in that it needs no data: everything here is
+numbers in, numbers out, so it is the one Python suite the CI can run without a
+DEM from another repository. `test_kernels.py` reads the geoSurfDEM Malpi crop,
+which lives outside this tree, and so still runs only by hand.
 
 The five cases are the ones checked against ForwardStress.f95 itself, and carry
 the same values `structural::stress`'s own Rust tests and geogst's port of the
@@ -26,7 +25,7 @@ import sys
 
 import numpy as np
 
-# Keyword form, so the five can be handed to both implementations unchanged.
+# Keyword form, so a case reads as the geology it stands for.
 STRESS_CASES = [
     dict(s1_trend_degr=0.0, s1_plunge_degr=90.0, s3_trend_degr=90.0, s3_plunge_degr=0.0,
          phi=0.5, strike_rhr_degr=0.0, dip_angle_degr=60.0, sigma1=30.0, sigma3=10.0),
@@ -39,17 +38,6 @@ STRESS_CASES = [
     dict(s1_trend_degr=0.0, s1_plunge_degr=90.0, s3_trend_degr=90.0, s3_plunge_degr=0.0,
          phi=0.5, strike_rhr_degr=0.0, dip_angle_degr=0.0, sigma1=30.0, sigma3=10.0),
 ]
-
-
-def _both():
-    """The compiled kernel and the fallback, or None when only one is available."""
-    from misah import _reference
-
-    try:
-        from misah._misah import kernels as compiled
-    except ImportError:
-        return None, _reference
-    return compiled, _reference
 
 
 def test_case_1_anderson_normal():
@@ -134,66 +122,11 @@ def test_rake_minus_90_is_pure_normal_dip_slip():
     assert np.isclose(plunge, 60.0)
 
 
-def test_the_two_implementations_agree_on_every_case():
-    compiled, reference = _both()
-    if compiled is None:
-        print("SKIP  extension not installed")
-        return
-
-    for i, kwargs in enumerate(STRESS_CASES):
-        c = compiled.solve_stress(**kwargs)
-        r = reference.solve_stress(**kwargs)
-        assert c.keys() == r.keys(), (i, kwargs)
-        for key, cv in c.items():
-            rv = r[key]
-            if cv is None or rv is None:
-                assert cv is rv, (i, key, cv, rv)
-            elif isinstance(cv, bool):
-                assert cv == rv, (i, key, cv, rv)
-            elif isinstance(cv, tuple):
-                # The type is asserted as well as the value: the compiled side
-                # first returned these as lists and the fallback as tuples,
-                # which is what this comparison caught.
-                assert type(rv) is tuple, (i, key, cv, rv)
-                assert np.allclose(cv, rv, atol=1e-9), (i, key, cv, rv)
-            else:
-                assert np.isclose(cv, rv, atol=1e-9), (i, key, cv, rv)
-
-
-def test_the_two_implementations_agree_on_rake_to_slickenline():
-    compiled, reference = _both()
-    if compiled is None:
-        print("SKIP  extension not installed")
-        return
-
-    for strike, dip, rake in ((0.0, 60.0, -90.0), (30.0, 70.0, -2.26), (200.0, 50.0, 43.56)):
-        assert np.allclose(
-            compiled.rake_to_slickenline(strike, dip, rake),
-            reference.rake_to_slickenline(strike, dip, rake),
-            atol=1e-9,
-        ), (strike, dip, rake)
-
-
-def test_fallback_alone_reproduces_the_known_results():
-    """The fallback must reach the figures the corrected Fortran binary, and
-    geogst's own port of it, established -- with or without the extension."""
-    from misah import _reference
-
-    sol = _reference.solve_stress(**STRESS_CASES[0])
-    assert sol["is_valid"] is True
-    assert np.isclose(sol["theoretical_rake"], -90.0)
-    assert np.allclose(sol["theoretical_slickenline"], (90.0, 60.0))
-
-    sol = _reference.solve_stress(**STRESS_CASES[1])
-    assert np.isclose(sol["theoretical_rake"], -2.261611727892)
-
-
-def test_package_exposes_the_stress_functions_either_way():
+def test_package_exposes_the_stress_functions():
     import misah
 
     assert hasattr(misah.kernels, "solve_stress")
     assert hasattr(misah.kernels, "rake_to_slickenline")
-    assert isinstance(misah.is_compiled, bool)
 
 
 if __name__ == "__main__":

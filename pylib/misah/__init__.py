@@ -1,11 +1,20 @@
 """Python bindings for misah.
 
-`misah.kernels` is the compiled extension where it can be built, and the pure
-Python implementation in `_reference` where it cannot -- QGIS being the case that
-matters, since a plugin neither picks the interpreter it is loaded into nor can
-count on a binary wheel installing. Both expose the same names and return the
-same arrays, so callers need not know which one answered; `is_compiled` tells
-them if they care.
+`misah.kernels` is the compiled extension. There is no pure-Python fallback:
+there was one, mirroring every exposed kernel, and it was dropped deliberately.
+It cost a second implementation of each function -- written independently, so
+that the tests could say the two agreed rather than that one of them ran -- and
+that price is what kept the mesh-grid intersection unexposed for as long as it
+was, marching triangles over a spatially indexed DEM not being something worth
+writing twice. The kernels are verified against the datasets they were ported
+from instead: the geoSurfDEM golden trace, and the five cases checked against
+ForwardStress.f95.
+
+What that gives up is the QGIS case the fallback existed for -- a plugin that
+cannot install a binary wheel now cannot use misah at all, rather than falling
+back to something slower. That is the same problem as the wheels themselves,
+and is to be solved there, by building for the platforms QGIS runs on, not by
+keeping a second implementation of everything in reserve.
 
 The extension is built as `misah._misah`, so its submodules register under that
 name. Aliasing here is what lets callers write `import misah.kernels`.
@@ -13,15 +22,8 @@ name. Aliasing here is what lets callers write `import misah.kernels`.
 
 import sys
 
-try:
-    from ._misah import kernels
-
-    is_compiled = True
-except ImportError:  # pragma: no cover - exercised only without the extension
-    from . import _reference as kernels
-
-    is_compiled = False
+from ._misah import kernels
 
 sys.modules[f"{__name__}.kernels"] = kernels
 
-__all__ = ["kernels", "is_compiled"]
+__all__ = ["kernels"]

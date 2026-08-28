@@ -1,14 +1,16 @@
 //! Python bindings for the numerical kernels.
 
-use numpy::{IntoPyArray, PyArray2, PyArrayMethods, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use misah::geometry::mesh::TriangleMesh;
 use misah::geometry::point::Point3D;
 use misah::raster::geotransform::GeoTransform;
 use misah::raster::grid::Grid;
 use misah::raster::intersection::intersect_plane_grid as kernel;
+use misah::raster::mesh_intersection::intersect_mesh_grid as mesh_kernel;
 use misah::structural::geol_axis::GeologicalAxis;
 use misah::structural::geol_plane::GeologicalPlane;
 use misah::structural::stress::ReducedStressTensor;
@@ -20,6 +22,17 @@ use misah::structural::stress::ReducedStressTensor;
 /// Named rather than spelled out at the signature, where four nested generics
 /// take longer to read than they say.
 type VerticesAndSegments<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<i64>>);
+
+/// What a mesh-grid intersection hands back: the points as an (N, 3) array of
+/// coordinates, the attitude of the mesh triangle that produced each as an
+/// (N, 2) array of dip direction and dip angle, the index of that triangle as
+/// an (N,) array, and the run's own statistics as a dict.
+type MeshIntersections<'py> = (
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray2<f64>>,
+    Bound<'py, PyArray1<i64>>,
+    Bound<'py, PyDict>,
+);
 
 /// Intersect an unbounded geological plane with a DEM.
 ///
@@ -177,8 +190,117 @@ fn solve_stress<'py>(
     Ok(dict)
 }
 
+/// Intersect a triangulated surface with a DEM.
+///
+/// The general case of `intersect_plane_grid`: a surface of arbitrary shape
+/// rather than one unbounded plane, which is what a folded or faulted
+/// geological surface needs. `vertices` is a (V, 3) array of coordinates and
+/// `faces` a (F, 3) array of indices into it -- the shape a VTK `POLYDATA`
+/// file gives, reading which is left to the caller.
+///
+/// Returns `(points, attitudes, mesh_triangles, stats)`: the intersection
+/// points as (N, 3), the dip direction and dip angle of the mesh triangle that
+/// produced each as (N, 2), the index of that triangle as (N,), and a dict of
+/// counters describing the run. The attitudes are what make the result a set
+/// of located measurements rather than a bare trace.
+#[pyfunction]
+#[pyo3(signature = (dem, geotransform, vertices, faces, nodata = None))]
+fn intersect_mesh_grid<'py>(
+    py: Python<'py>,
+    dem: PyReadonlyArray2<'py, f64>,
+    geotransform: [f64; 6],
+    vertices: PyReadonlyArray2<'py, f64>,
+    faces: PyReadonlyArray2<'py, i64>,
+    nodata: Option<f64>,
+) -> PyResult<MeshIntersections<'py>> {
+
+    let dem_view = dem.as_array();
+    if !dem_view.is_standard_layout() {
+        return Err(PyValueError::new_err(
+            "DEM must be C-contiguous; pass numpy.ascontiguousarray(dem)",
+        ));
+    }
+
+    let vertex_view = vertices.as_array();
+    if vertex_view.ncols() != 3 {
+        return Err(PyValueError::new_err("vertices must be an (N, 3) array"));
+    }
+    let face_view = faces.as_array();
+    if face_view.ncols() != 3 {
+        return Err(PyValueError::new_err("faces must be an (N, 3) array"));
+    }
+
+    let points: Vec<Point3D> = vertex_view
+        .rows()
+        .into_iter()
+        .map(|r| Point3D::from([r[0], r[1], r[2]]))
+        .collect();
+
+    // Checked here rather than left to TriangleMesh's own error, so that a
+    // negative index -- which numpy allows and a usize cast would turn into an
+    // enormous positive one -- is refused as the mistake it is.
+    let mut triples: Vec<[usize; 3]> = Vec::with_capacity(face_view.nrows());
+    for row in face_view.rows() {
+        let mut triple = [0usize; 3];
+        for (slot, &index) in triple.iter_mut().zip(row.iter()) {
+            if index < 0 {
+                return Err(PyValueError::new_err(format!(
+                    "face index {index} is negative"
+                )));
+            }
+            *slot = index as usize;
+        }
+        triples.push(triple);
+    }
+
+    let mesh = TriangleMesh::new(points, triples)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+    let grid = Grid {
+        transform: GeoTransform { data: geotransform },
+        data: dem_view.to_owned(),
+    };
+
+    let out = py.detach(|| mesh_kernel(&mesh, &grid, nodata));
+
+    let n = out.intersections.len();
+
+    let flat_points: Vec<f64> = out
+        .intersections
+        .iter()
+        .flat_map(|i| i.point.coords)
+        .collect();
+    let points = flat_points.into_pyarray(py).reshape([n, 3])?;
+
+    let flat_attitudes: Vec<f64> = out
+        .intersections
+        .iter()
+        .flat_map(|i| [i.attitude.azimuth, i.attitude.dip_angle])
+        .collect();
+    let attitudes = flat_attitudes.into_pyarray(py).reshape([n, 2])?;
+
+    let triangles: Vec<i64> = out
+        .intersections
+        .iter()
+        .map(|i| i.mesh_triangle as i64)
+        .collect();
+    let mesh_triangles = triangles.into_pyarray(py);
+
+    let s = out.stats;
+    let stats = PyDict::new(py);
+    stats.set_item("mesh_triangles", s.mesh_triangles)?;
+    stats.set_item("degenerate_mesh_triangles", s.degenerate_mesh_triangles)?;
+    stats.set_item("mesh_triangles_outside_grid", s.mesh_triangles_outside_grid)?;
+    stats.set_item("dem_triangle_pairs", s.dem_triangle_pairs)?;
+    stats.set_item("coplanar_sides", s.coplanar_sides)?;
+    stats.set_item("duplicate_crossings", s.duplicate_crossings)?;
+
+    Ok((points, attitudes, mesh_triangles, stats))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(intersect_plane_grid, m)?)?;
+    m.add_function(wrap_pyfunction!(intersect_mesh_grid, m)?)?;
     m.add_function(wrap_pyfunction!(plane_normal, m)?)?;
     m.add_function(wrap_pyfunction!(rake_to_slickenline, m)?)?;
     m.add_function(wrap_pyfunction!(solve_stress, m)?)?;
