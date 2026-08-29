@@ -1,4 +1,10 @@
-# Tests on Linux at every push, and wheels on tags.
+# Tests on Linux at every push, wheels and a source distribution on tags, and
+# an upload that never happens on its own.
+#
+# The two publish jobs at the end are `when: manual`. Neither PyPI nor crates.io
+# lets a version be replaced once uploaded, so the tag builds and checks the
+# artifacts and then waits for someone to press the button, rather than making
+# `git push --tags` the irreversible act.
 #
 # Everything here runs on the Linux runners a GitLab Free namespace gets, which
 # is less of a restriction than it sounds: both Linux wheels are cross-compiled
@@ -54,6 +60,7 @@ cache:
 stages:
   - test
   - package
+  - publish
 
 # The kernel crate, which is where every test lives and which depends on no
 # interpreter. Kept apart from the workspace build for that reason: whatever
@@ -141,7 +148,7 @@ test:python:
     - python3 pylib/tests/test_best_fit.py
 
 # ---------------------------------------------------------------------------
-# Wheels
+# Wheels and the source distribution
 # ---------------------------------------------------------------------------
 #
 # The distribution, as opposed to the correctness the stage above checks. Only
@@ -160,10 +167,19 @@ test:python:
 # a decision instead of an accident of the image. Building natively in a
 # `quay.io/pypa/manylinux_2_28_x86_64` container was tried first and works, but
 # reaches only 2.28 and needs a container to do it.
-.wheel:
+# What every packaging job shares: it runs on tags and it leaves its artifact in
+# `wheels/`, which is also where the publish stage looks for what to upload.
+.tagged:
   stage: package
   rules:
     - if: $CI_COMMIT_TAG
+  artifacts:
+    paths:
+      - wheels/
+    expire_in: 1 month
+
+.wheel:
+  extends: .tagged
   before_script:
     # PEP 668 marks the Debian interpreter externally managed, so pip needs a
     # virtualenv even here. zig arrives through pip as well, which keeps this
@@ -172,10 +188,6 @@ test:python:
     - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
     - python3 -m venv /tmp/venv
     - . /tmp/venv/bin/activate && pip install -q maturin ziglang cargo-zigbuild
-  artifacts:
-    paths:
-      - wheels/
-    expire_in: 1 month
 
 # The one wheel this pipeline can do more than build: the runner is x86-64
 # Linux, so the artifact can be installed and the test suites run against it.
@@ -208,3 +220,102 @@ wheel:linux:aarch64:
     - cd pylib && maturin build --release --zig --target aarch64-unknown-linux-gnu --out ../wheels
     - cd ..
     - python3 ci/check_wheel.py 'wheels/*aarch64*.whl' aarch64
+
+# The source distribution, which is what macOS and Windows get until they have
+# wheels of their own: with no matching wheel pip falls back to this and builds
+# it, needing a Rust toolchain on the user's machine but not a runner here.
+# Without it those platforms get no install at all, not a slower one.
+#
+# Building it is one command; the rest of this job is the part worth having.
+# `pip install` on the tarball takes the same path a user on an unsupported
+# platform takes -- unpack, resolve the inherited workspace version, compile the
+# extension, and only then run the suites -- and none of the other jobs exercise
+# it. maturin rewrites the manifests when it packs a project whose crate lives
+# outside the Python directory, so the sdist working at all is a claim about
+# that rewriting rather than about the code.
+#
+# No zig and no cross-compilation: this is a tarball, so `.tagged` directly.
+wheel:sdist:
+  extends: .tagged
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin numpy
+  script:
+    - . /tmp/venv/bin/activate
+    - cd pylib && maturin sdist --out ../wheels
+    - cd ..
+    # From the tarball, not from the tree: the point is that what gets uploaded
+    # builds, not that the working copy does.
+    - pip install wheels/*.tar.gz
+    - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# ---------------------------------------------------------------------------
+# Publishing
+# ---------------------------------------------------------------------------
+#
+# Both jobs are manual. A version is final once uploaded -- PyPI and crates.io
+# alike refuse to replace one -- so the pipeline stops with the artifacts built
+# and checked, and someone decides. `git push --tags` stays reversible; pressing
+# the button does not.
+#
+# They are also independent of each other: the Python distribution is `misah` on
+# PyPI, the crate is `misah` on crates.io, and one can go out without the other.
+
+# PyPI through Trusted Publishing, so no token is stored anywhere in this
+# project. GitLab mints a short-lived OIDC token for the job, PyPI exchanges it
+# for an upload token good for a few minutes, and twine uses that.
+#
+# It needs configuring once on the PyPI side, under the project's Publishing
+# settings: namespace `mauroalberti`, project `misah`, top-level pipeline file
+# `.gitlab-ci.yml`, environment left empty. For the first upload, when the
+# project does not exist yet, that is a "pending publisher" instead -- same
+# fields, created before the first release rather than after.
+publish:pypi:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  needs:
+    - wheel:linux:x86_64
+    - wheel:linux:aarch64
+    - wheel:sdist
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q twine
+  script:
+    - . /tmp/venv/bin/activate
+    # Everything the package stage built: two wheels and the tarball.
+    - ls -l wheels/
+    - twine check wheels/*
+    - |
+      api_token=$(curl -sS -X POST https://pypi.org/_/oidc/mint-token \
+        -d "{\"token\":\"${PYPI_ID_TOKEN}\"}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+    - TWINE_USERNAME=__token__ TWINE_PASSWORD="${api_token}" twine upload wheels/*
+
+# crates.io, which takes the kernel crate alone. `misah-py` is not published
+# there: it is the extension, it depends on `misah` by path rather than by
+# version, and nobody adds it to a Cargo.toml.
+#
+# Needs `CARGO_REGISTRY_TOKEN` as a masked, protected CI variable, and a
+# protected tag to go with it. `--locked` so the published crate is built from
+# the lockfile the tests ran against.
+publish:crates:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  needs:
+    - test:kernel
+  script:
+    - cargo publish -p misah --locked

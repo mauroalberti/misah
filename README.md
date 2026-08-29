@@ -573,7 +573,30 @@ it never defined.
 `.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
 the examples, gates on clippy, and installs the built wheel to run the four
 data-free Python suites against it — the bindings imported and called, not
-merely compiled. On tags it also builds the wheels.
+merely compiled. On tags it also builds the two wheels and the source
+distribution, and offers two manual jobs that upload them.
+
+Manual because a version is final once uploaded — PyPI and crates.io alike
+refuse to replace one — so the tag builds and checks the artifacts, and someone
+then decides. `git push --tags` stays reversible; pressing the button does not.
+PyPI goes through Trusted Publishing, so no token is stored in this project:
+GitLab mints an OIDC token for the job and PyPI exchanges it for one good for a
+few minutes. That needs configuring once on the PyPI side, as a pending
+publisher before the first release exists. crates.io takes the kernel crate
+alone; `misah-py` is the extension, depends on `misah` by path rather than by
+version, and is not something anyone adds to a Cargo.toml.
+
+### One version number
+
+`[workspace.package] version` in the root `Cargo.toml`, inherited by both
+members. They were maintained separately and had drifted — the crate at `0.2.0`
+while the bindings were at `0.2.0-alpha.0` — which a tag cannot express, a
+release being one commit. Both are now `0.2.0-alpha.1`, which maturin normalizes
+to `0.2.0a1` for PyPI.
+
+The alpha is deliberate, and it has a consequence worth stating rather than
+discovering: pre-releases are opt-in on both sides, so the install line is
+`pip install --pre misah`, and `cargo add misah` will not take it either.
 
 ### Wheels
 
@@ -606,6 +629,18 @@ produced a host binary would pass every other test in the pipeline.
 `abi3-py39` is what keeps this small: one wheel per platform rather than one per
 platform and interpreter version, so the whole matrix is five artifacts and the
 tag-only rule keeps it inside the Free tier's 400 compute minutes a month.
+
+**The source distribution is what the platforms without a wheel get.** With no
+wheel matching, pip falls back to the sdist and builds it, which needs a Rust
+toolchain on the user's machine but no runner here — the difference between a
+harder install and no install at all, which is what shipping wheels alone would
+have meant for macOS and Windows. `wheel:sdist` builds it and then installs
+*from the tarball* and runs the four suites against that, because the sdist
+takes a path nothing else in the pipeline does: maturin rewrites the manifests
+when it packs a project whose crate lives outside the Python directory, and with
+the version now inherited from the workspace, that rewriting is a claim to be
+checked rather than assumed. Verified here as well as in CI: the tarball
+installs into a clean virtualenv, compiles, and passes all four.
 
 **Windows was attempted twice and is not solved**, so there is no job for it
 here. Both attempts are worth recording, because neither failed for the reason
@@ -645,7 +680,7 @@ dead, not merely the one previously named here: `misah.geometry.geom2d`,
 `misah.geometry.geom3d`, `misah.orientations.orien3d`,
 `misah.georeferenced.georef2d` — the last of which was a file deleted two
 commits before this line was written — and it compared results against `pygsf`,
-which geogst itself superseded. Nothing in it touched any of the four functions
+which geogst itself superseded. Nothing in it touched any of the ten functions
 the package exposes today. A notebook covering those would be worth having, and
 would be a new one.
 
@@ -660,3 +695,19 @@ and so print the placeholder instead of the error at the moment a test failed;
 ten such assertions had to be corrected by hand once clippy pointed at them.
 The edition closes the class rather than the instances. `cargo fix --edition`
 needed no source changes to make the move.
+
+## Licence, and the data
+
+GPL-3.0-or-later, and the text sits in three places: the repository root, `lib/`
+and `pylib/`. The copies are not redundancy but the consequence of how the
+artifacts are cut. `cargo package` takes one directory and nothing above it, so
+the SPDX expression in `lib/Cargo.toml` would have reached crates.io without the
+licence it names; the wheel is the same case, which is why `pylib` already
+carried one.
+
+The data under `example_data` is not the repository's to license and travels
+under its own terms, recorded in `example_data/NOTICE.md`. The Monte Alpi DEM is
+derived from the global ASTER GDEM, which permits redistribution and asks for an
+acknowledgement in return: **ASTER GDEM is a product of METI and NASA**.
+Committing the file is redistribution, so the acknowledgement belongs in the
+tree rather than in the citation of a paper that has not been written.

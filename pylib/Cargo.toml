@@ -3,7 +3,9 @@
 # packages cannot share one within a workspace. Only the Python distribution is
 # called misah, and that name lives in pyproject.toml, not here.
 name = "misah-py"
-version = "0.2.0-alpha.0"
+# One number for the workspace; see the root Cargo.toml. maturin reads it from
+# here and normalizes it to PEP 440, so 0.2.0-alpha.1 is published as 0.2.0a1.
+version.workspace = true
 authors = ["mauroalberti <alberti.m65@gmail.com>"]
 description = "Python bindings for misah, a crate for structural geology processings."
 license = "GPL-3.0-or-later"

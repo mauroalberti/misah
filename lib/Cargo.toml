@@ -1,9 +1,13 @@
 [package]
 name = "misah"
-version = "0.2.0"
+# One number for the workspace; see the root Cargo.toml.
+version.workspace = true
 authors = ["mauroalberti <alberti.m65@gmail.com>"]
 description = "A crate for structural geology processings."
 license = "GPL-3.0-or-later"
+# A copy of the root LICENSE, not a link to it: cargo packages this directory
+# and nothing above it, so the SPDX expression above would have travelled to
+# crates.io without the text it names. The same reason pylib carries its own.
 readme = "../README.md"
 repository = "https://gitlab.com/mauroalberti/misah"
 exclude = [
