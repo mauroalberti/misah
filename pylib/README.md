@@ -11,11 +11,13 @@ notice.
 ## Install
 
 ```sh
-pip install --pre misah
+pip install misah
 ```
 
-The `--pre` is not decoration: the published version is a pre-release, and pip
-skips those unless asked. It goes away with the first stable release.
+That installs the alpha, and no `--pre` is needed for it: pip passes over a
+pre-release only when there is a stable version to prefer instead, and misah has
+none yet. From the first stable release on, the alphas stop arriving that way,
+and `pip install --pre misah` is what reaches them.
 
 Wheels are `abi3-py39`, so one of them serves every CPython from 3.9 on. They
 are built for **Linux only** so far — `manylinux_2_17`, x86-64 and aarch64,
