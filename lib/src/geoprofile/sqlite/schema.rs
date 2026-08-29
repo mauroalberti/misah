@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::geoprofile::error::GeoProfileError;
 
-fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, GeoProfileError> {
+pub fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, GeoProfileError> {
     let mut stmt = conn.prepare(
         "SELECT EXISTS(
             SELECT 1
@@ -16,7 +16,7 @@ fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, GeoProfileE
     Ok(exists != 0)
 }
 
-fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>, GeoProfileError> {
+pub fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>, GeoProfileError> {
 
     let pragma = format!("PRAGMA table_info({})", table_name);
     let mut stmt = conn.prepare(&pragma)?;
@@ -56,6 +56,14 @@ pub fn require_columns(
     Ok(())
 }
 
+/// Check that an export carries the tables and columns the reader needs.
+///
+/// Only the nine tables present since schema v1 are required. qgSurf has since
+/// added `gp_profile_vertices`, `gp_projected_focal_mechanisms`,
+/// `gp_graphical_params`, `gp_source_categories` (v2 to v4) and the span form
+/// of `gp_intersected_lines` (v5); all of those are read when present and
+/// passed over when not, so that one reader serves every export written so far.
+/// Requiring them would refuse the older files this validation exists to admit.
 pub fn validate_geoprofile_schema(conn: &Connection) -> Result<(), GeoProfileError> {
     require_columns(
         conn,
@@ -115,6 +123,8 @@ pub fn validate_geoprofile_schema(conn: &Connection) -> Result<(), GeoProfileErr
         ],
     )?;
 
+    // The distance columns are checked apart: schema v5 replaced the single s
+    // with the span s_from/s_to, and a migrated database carries both.
     require_columns(
         conn,
         "gp_intersected_lines",
@@ -122,10 +132,19 @@ pub fn validate_geoprofile_schema(conn: &Connection) -> Result<(), GeoProfileErr
             "rec_id",
             "profile_id",
             "feat_category",
-            "s",
             "extra_json",
         ],
     )?;
+
+    let line_columns = table_columns(conn, "gp_intersected_lines")?;
+    let has_span = line_columns.iter().any(|c| c == "s_from")
+        && line_columns.iter().any(|c| c == "s_to");
+    if !has_span && !line_columns.iter().any(|c| c == "s") {
+        return Err(GeoProfileError::MissingColumn {
+            table: "gp_intersected_lines".to_string(),
+            column: "s_from/s_to, or s in an export older than schema v5".to_string(),
+        });
+    }
 
 
     require_columns(

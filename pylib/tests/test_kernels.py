@@ -1,8 +1,12 @@
-"""Check the mispy bindings against the geoSurfDEM golden dataset.
+"""Check the misah raster bindings against the geoSurfDEM golden dataset.
 
 The binding must not perturb what the kernel computes, so the comparison is
 against a trace independently known to be correct: 404 vertices for plane 135/35
 over the Malpi ASTER DEM, every one of them on the plane.
+
+Needs the Malpi crop from the geoSurfDEM repository, which lives outside this
+tree, so this file runs by hand rather than in CI; `test_stress.py` is the
+suite that needs no data.
 
 Run from anywhere but the `pylib` directory, which shadows the installed package
 with its source tree:
@@ -49,7 +53,7 @@ def plane_normal_reference(dip_dir, dip_angle):
 
 
 def test_normal_conventions():
-    from mispy.kernels import plane_normal
+    from misah.kernels import plane_normal
 
     assert np.allclose(plane_normal(0.0, 0.0), [0.0, 0.0, 1.0])
     assert np.allclose(plane_normal(90.0, 90.0), [1.0, 0.0, 0.0], atol=1e-12)
@@ -61,7 +65,7 @@ def test_normal_conventions():
 
 
 def test_malpi_trace_matches_the_known_result():
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     points, segments = intersect_plane_grid(
@@ -78,7 +82,7 @@ def test_malpi_trace_matches_the_known_result():
 
 
 def test_vertical_and_horizontal_planes():
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
 
@@ -102,7 +106,7 @@ def test_vertical_and_horizontal_planes():
 
 def test_non_contiguous_dem_is_refused():
     """A strided view would be read as if packed; it must fail loudly."""
-    from mispy.kernels import intersect_plane_grid
+    from misah.kernels import intersect_plane_grid
 
     dem, geotransform, nodata = read_esri_ascii(DEM_PATH)
     try:
@@ -112,6 +116,14 @@ def test_non_contiguous_dem_is_refused():
     except ValueError:
         return
     raise AssertionError("non-contiguous DEM was accepted")
+
+
+def test_package_exposes_the_raster_kernels():
+    import misah
+
+    assert hasattr(misah, "kernels")
+    for name in ("intersect_plane_grid", "plane_normal", "intersect_mesh_grid"):
+        assert hasattr(misah.kernels, name), name
 
 
 if __name__ == "__main__":

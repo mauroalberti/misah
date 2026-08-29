@@ -37,6 +37,18 @@ pub enum DownSense {
     Right,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProjectedFocalMechanismData {
+    pub strike: f64,
+    pub dip: f64,
+    pub rake: f64,
+    /// Azimuth of the profile where the mechanism was projected, which is what
+    /// decides how the mechanism appears on that section rather than another.
+    pub profile_azimuth: f64,
+}
+
 pub type ProjectedPointRecord = ProjectedRecord<ProjectedPointData>;
 
 pub type ProjectedAttitudeRecord = ProjectedRecord<ProjectedAttitudeData>;
+
+pub type ProjectedFocalMechanismRecord = ProjectedRecord<ProjectedFocalMechanismData>;

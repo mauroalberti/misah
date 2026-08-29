@@ -1,0 +1,321 @@
+# Tests on Linux at every push, wheels and a source distribution on tags, and
+# an upload that never happens on its own.
+#
+# The two publish jobs at the end are `when: manual`. Neither PyPI nor crates.io
+# lets a version be replaced once uploaded, so the tag builds and checks the
+# artifacts and then waits for someone to press the button, rather than making
+# `git push --tags` the irreversible act.
+#
+# Everything here runs on the Linux runners a GitLab Free namespace gets, which
+# is less of a restriction than it sounds: both Linux wheels are cross-compiled
+# with zig from the same x86-64 runner, and `abi3-py39` means one wheel per
+# platform rather than one per platform and interpreter.
+#
+# macOS is the hole. It cannot be cross-compiled from here without the Apple
+# SDK, which is a licensing question before it is a technical one, so the
+# options are a hosted macOS runner -- Premium/Ultimate, or free through the
+# GitLab for Open Source programme, which this project's GPL-3 licence and
+# public namespace should qualify it for -- or a mirror onto a service that
+# gives macOS runners to public repositories.
+
+default:
+  # The latest stable 1.x on Debian bookworm. Floating within the major version
+  # rather than pinned: this is a small crate on edition 2018/2021 with no
+  # nightly features, so a stable release breaking it is itself worth knowing
+  # about, and a pin would only defer finding out.
+  image: rust:1-bookworm
+  # A superseded pipeline has nothing left to say, so let a new push cancel it.
+  interruptible: true
+
+variables:
+  # GitLab caches only what sits inside the build directory, and cargo's home
+  # does not, hence the move.
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  CARGO_TERM_COLOR: always
+
+# One pipeline per change, not two: without this, a branch that has an open
+# merge request runs both a branch pipeline and a merge-request one.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Tags, or the wheel stage could never run: on a tag pipeline
+    # `$CI_COMMIT_BRANCH` is empty, so without this none of the rules below
+    # match and no pipeline is created at all.
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+cache:
+  # Keyed on the lockfile: dependencies change only when it does, and a stale
+  # key would have every job recompile the whole tree.
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/registry/index
+    - .cargo/registry/cache
+    - target/
+
+stages:
+  - test
+  - package
+  - publish
+
+# The kernel crate, which is where every test lives and which depends on no
+# interpreter. Kept apart from the workspace build for that reason: whatever
+# happens to the Python side, this job still says whether the geometry is
+# right.
+test:kernel:
+  stage: test
+  script:
+    - rustc --version && cargo --version
+    # --locked: build the dependency versions Cargo.lock records, and fail
+    # rather than quietly resolve new ones, so a green pipeline means the
+    # committed lockfile is the one that was tested.
+    - cargo test -p misah --locked
+    # The examples are how the kernels are run against the reference datasets,
+    # so they are worth compiling even though nothing imports them.
+    - cargo build -p misah --examples --locked
+
+# pyo3 wants an interpreter to configure the build, even for an abi3 extension
+# that deliberately links none of it. Anything touching pylib needs this first.
+.with-python:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3
+
+# The whole workspace, pylib included, so that a break in the bindings does not
+# wait for a release to show itself.
+build:workspace:
+  extends: .with-python
+  stage: test
+  script:
+    - cargo build --workspace --locked
+
+# Clippy over everything, tests and examples included, denying warnings.
+#
+# It earns being a gate: it was clippy that caught ten assertion messages
+# written as `"...{err}"` in an edition-2018 crate, where a lone literal is not
+# a format string, so each would have printed the placeholder instead of the
+# error at the moment a test failed in this very pipeline.
+#
+# rustfmt is deliberately not here. The spacing in this tree is a house style,
+# and `cargo fmt --check` would fail on the first file it opened; making it a
+# gate would mean reformatting the crate, which is a decision of its own and not
+# a side effect of wanting a linter.
+lint:clippy:
+  extends: .with-python
+  stage: test
+  script:
+    # The official Rust image installs the minimal profile, which leaves clippy
+    # out; a no-op when some future image ships it.
+    - rustup component add clippy
+    - cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# The Python bindings, actually imported and called rather than merely compiled.
+#
+# `build:workspace` proves the extension builds; it says nothing about whether
+# `import misah` finds it, whether array shapes and index handling survive the
+# boundary, or whether a pyo3 signature default resolves. Those are separate
+# claims, and this suite has already caught one of them.
+#
+# The four data-free suites run here. `test_kernels.py` reads the Malpi crop
+# from the geoSurfDEM repository, which is not in this tree and whose row and
+# column counts its expected vertex counts depend on; the DEM committed under
+# `example_data` is a wider crop of the same ASTER tile, so it cannot stand in
+# without rewriting those numbers. Until one of the two is resolved, the raster
+# bindings stay verified by hand.
+test:python:
+  stage: test
+  before_script:
+    # PEP 668 marks the Debian interpreter externally managed, so pip needs a
+    # virtualenv even here.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin numpy
+  script:
+    - . /tmp/venv/bin/activate
+    # The built wheel rather than `maturin develop`: it is what a user installs,
+    # and installing it is itself part of what this job is checking.
+    - cd pylib && maturin build --release --out /tmp/wheels && cd ..
+    - . /tmp/venv/bin/activate && pip install --no-index /tmp/wheels/*.whl
+    # From the repository root, never from pylib, whose source tree shadows the
+    # installed package.
+    - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# ---------------------------------------------------------------------------
+# Wheels and the source distribution
+# ---------------------------------------------------------------------------
+#
+# The distribution, as opposed to the correctness the stage above checks. Only
+# on tags: a wheel from an untagged commit is not something anyone installs,
+# and the Free tier's 400 compute minutes a month are better spent than on
+# rebuilding one per push.
+#
+# `abi3-py39` is what makes this small. The extension links no version-specific
+# CPython symbol, so it is one wheel per *platform* rather than one per platform
+# and interpreter version -- five artifacts instead of thirty.
+#
+# Both Linux targets are cross-compiled with zig, which is not a workaround for
+# lacking runners so much as the better tool. `maturin --zig` links against a
+# glibc chosen at build time rather than whichever the runner happens to carry,
+# so the wheel comes out tagged `manylinux_2_17` -- the compatibility floor is
+# a decision instead of an accident of the image. Building natively in a
+# `quay.io/pypa/manylinux_2_28_x86_64` container was tried first and works, but
+# reaches only 2.28 and needs a container to do it.
+# What every packaging job shares: it runs on tags and it leaves its artifact in
+# `wheels/`, which is also where the publish stage looks for what to upload.
+.tagged:
+  stage: package
+  rules:
+    - if: $CI_COMMIT_TAG
+  artifacts:
+    paths:
+      - wheels/
+    expire_in: 1 month
+
+.wheel:
+  extends: .tagged
+  before_script:
+    # PEP 668 marks the Debian interpreter externally managed, so pip needs a
+    # virtualenv even here. zig arrives through pip as well, which keeps this
+    # job free of any system package beyond the interpreter.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin ziglang cargo-zigbuild
+
+# The one wheel this pipeline can do more than build: the runner is x86-64
+# Linux, so the artifact can be installed and the test suites run against it.
+# That is a stronger claim than `test:python` makes -- that job builds for the
+# host, this one checks the cross-compiled article a user would actually get.
+wheel:linux:x86_64:
+  extends: .wheel
+  script:
+    - . /tmp/venv/bin/activate
+    - rustup target add x86_64-unknown-linux-gnu
+    - cd pylib && maturin build --release --zig --target x86_64-unknown-linux-gnu --out ../wheels
+    - cd ..
+    - python3 ci/check_wheel.py 'wheels/*x86_64*.whl' x86_64
+    - pip install -q numpy && pip install --no-index wheels/*x86_64*.whl
+    - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# Nothing here can run an aarch64 binary, so the check is what can be checked
+# without executing it: that the extension inside the wheel really is ARM, and
+# that its glibc requirements match the tag the wheel claims. A cross-build
+# that silently produced a host binary would pass every other test in this
+# file.
+wheel:linux:aarch64:
+  extends: .wheel
+  script:
+    - . /tmp/venv/bin/activate
+    - rustup target add aarch64-unknown-linux-gnu
+    - cd pylib && maturin build --release --zig --target aarch64-unknown-linux-gnu --out ../wheels
+    - cd ..
+    - python3 ci/check_wheel.py 'wheels/*aarch64*.whl' aarch64
+
+# The source distribution, which is what macOS and Windows get until they have
+# wheels of their own: with no matching wheel pip falls back to this and builds
+# it, needing a Rust toolchain on the user's machine but not a runner here.
+# Without it those platforms get no install at all, not a slower one.
+#
+# Building it is one command; the rest of this job is the part worth having.
+# `pip install` on the tarball takes the same path a user on an unsupported
+# platform takes -- unpack, resolve the inherited workspace version, compile the
+# extension, and only then run the suites -- and none of the other jobs exercise
+# it. maturin rewrites the manifests when it packs a project whose crate lives
+# outside the Python directory, so the sdist working at all is a claim about
+# that rewriting rather than about the code.
+#
+# No zig and no cross-compilation: this is a tarball, so `.tagged` directly.
+wheel:sdist:
+  extends: .tagged
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin numpy
+  script:
+    - . /tmp/venv/bin/activate
+    - cd pylib && maturin sdist --out ../wheels
+    - cd ..
+    # From the tarball, not from the tree: the point is that what gets uploaded
+    # builds, not that the working copy does.
+    - pip install wheels/*.tar.gz
+    - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# ---------------------------------------------------------------------------
+# Publishing
+# ---------------------------------------------------------------------------
+#
+# Both jobs are manual. A version is final once uploaded -- PyPI and crates.io
+# alike refuse to replace one -- so the pipeline stops with the artifacts built
+# and checked, and someone decides. `git push --tags` stays reversible; pressing
+# the button does not.
+#
+# They are also independent of each other: the Python distribution is `misah` on
+# PyPI, the crate is `misah` on crates.io, and one can go out without the other.
+
+# PyPI through Trusted Publishing, so no token is stored anywhere in this
+# project. GitLab mints a short-lived OIDC token for the job, PyPI exchanges it
+# for an upload token good for a few minutes, and twine uses that.
+#
+# It needs configuring once on the PyPI side, under the project's Publishing
+# settings: namespace `mauroalberti`, project `misah`, top-level pipeline file
+# `.gitlab-ci.yml`, environment left empty. For the first upload, when the
+# project does not exist yet, that is a "pending publisher" instead -- same
+# fields, created before the first release rather than after.
+publish:pypi:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  needs:
+    - wheel:linux:x86_64
+    - wheel:linux:aarch64
+    - wheel:sdist
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q twine
+  script:
+    - . /tmp/venv/bin/activate
+    # Everything the package stage built: two wheels and the tarball.
+    - ls -l wheels/
+    - twine check wheels/*
+    - |
+      api_token=$(curl -sS -X POST https://pypi.org/_/oidc/mint-token \
+        -d "{\"token\":\"${PYPI_ID_TOKEN}\"}" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+    - TWINE_USERNAME=__token__ TWINE_PASSWORD="${api_token}" twine upload wheels/*
+
+# crates.io, which takes the kernel crate alone. `misah-py` is not published
+# there: it is the extension, it depends on `misah` by path rather than by
+# version, and nobody adds it to a Cargo.toml.
+#
+# Needs `CARGO_REGISTRY_TOKEN` as a masked, protected CI variable, and a
+# protected tag to go with it. `--locked` so the published crate is built from
+# the lockfile the tests ran against.
+publish:crates:
+  stage: publish
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  needs:
+    - test:kernel
+  script:
+    - cargo publish -p misah --locked

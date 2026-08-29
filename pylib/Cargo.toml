@@ -1,7 +1,15 @@
 [package]
-name = "mispy"
-version = "0.2.0-alpha.0"
+# Not `misah`: the core crate in ../lib already claims that name, and two
+# packages cannot share one within a workspace. Only the Python distribution is
+# called misah, and that name lives in pyproject.toml, not here.
+name = "misah-py"
+# One number for the workspace; see the root Cargo.toml. maturin reads it from
+# here and normalizes it to PEP 440, so 0.2.0-alpha.1 is published as 0.2.0a1.
+version.workspace = true
 authors = ["mauroalberti <alberti.m65@gmail.com>"]
+description = "Python bindings for misah, a crate for structural geology processings."
+license = "GPL-3.0-or-later"
+readme = "README.md"
 keywords = ["earth-sciences", "structural-geology"]
 categories = ["science"]
 edition = "2021"
@@ -22,6 +30,10 @@ numpy = "0.29"
 pyo3 = { version = "0.29", features = ["abi3-py39"] }
 
 [lib]
-name = "mispy"
+# The extension ships as misah._misah, private because callers reach its
+# contents through the aliases misah/__init__.py sets up. The leading underscore
+# is what keeps `import misah` unambiguous once the package and the compiled
+# module would otherwise share a name.
+name = "_misah"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
