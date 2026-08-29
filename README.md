@@ -599,9 +599,18 @@ while the bindings were at `0.2.0-alpha.0` — which a tag cannot express, a
 release being one commit. Both are now `0.2.0-alpha.1`, which maturin normalizes
 to `0.2.0a1` for PyPI.
 
-The alpha is deliberate, and it has a consequence worth stating rather than
-discovering: pre-releases are opt-in on both sides, so the install line is
-`pip install --pre misah`, and `cargo add misah` will not take it either.
+The alpha is deliberate, and what it costs an installer is less than it looks —
+which is worth recording, because this file first claimed the opposite. pip is
+said to skip pre-releases unless asked with `--pre`, and the rule is narrower
+than that: it skips them only when a stable version exists to prefer instead.
+misah has none, so `pip install misah` installs `0.2.0a1` today, verified by
+doing it from PyPI into a clean virtualenv. The flag becomes necessary the day a
+stable release exists and an alpha after it is wanted.
+
+Cargo is the stricter of the two, and there the usual statement does hold: a
+requirement like `misah = "0.2"` does not match `0.2.0-alpha.1`, since a version
+range admits a pre-release only when the range itself names one. Until a stable
+version is published, a dependent has to write the pre-release out in full.
 
 ### Wheels
 
