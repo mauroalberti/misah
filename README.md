@@ -40,8 +40,8 @@ a disagreement over conventions.
 rather than a single plane — the case a folded or faulted geological surface
 needs. It is a port of geoSurfDEM's `IntersectDEM`, the one part of that suite
 with no equivalent in geogst. Each point comes out with the attitude of the mesh
-triangle that produced it, so the result is a set of located attitudes, ready
-for `BestFitGeoplanes`-style inversion, and not merely a trace.
+triangle that produced it, so the result is a set of located attitudes and not
+merely a trace. What consumes them is **Best-fit geoplanes** below.
 
 ```sh
 cargo run --release -p misah --example mesh_dem_vtk -- <dem.asc> <surface.vtk>
@@ -94,6 +94,104 @@ Note that `test_data/src_planes/malpi_045_90.vtk` in geoSurfDEM is a byte-copy
 of `malpi_135_35.vtk`, so that suite has no vertical-surface case despite the
 name; the vertical and node-aligned configurations are covered by unit tests
 instead.
+
+## Best-fit geoplanes
+
+`lib/src/structural/best_fit.rs` reads an attitude back out of located points,
+by fitting a plane to each cell of a regular grid over them. It is the consumer
+the mesh kernel was written for: that one says where a surface meets the
+topography, this one says what the surface's orientation was. The two are not
+coupled — the input here is bare coordinates, so a contact digitised from a map
+or a set of readings along an outcrop feeds it just as well.
+
+```sh
+cargo run --release -p misah --example best_fit_csv -- \
+    <points.csv> <cell_size> [coincidence_distance] [max_collinearity]
+```
+
+A port of geoSurfDEM's `BestFitGeoplanes`, whose numerical core is the Fortran
+`invert_main_attitude` in `GeoInversions`: centre a cell's points, take the SVD
+of the m-by-3 matrix through LAPACK, read the normal off the right singular
+vector of the smallest singular value. Unlike `ForwardStress.f95` above, this
+Fortran compiles clean under `-fimplicit-none` — checked before porting, since
+that is exactly the bug that moved two of the five stress cases — so its numbers
+can be trusted as they stand.
+
+`algebra::eigen` is new and is why LAPACK does not come with it: the right
+singular vectors of the centred coordinates are the eigenvectors of their 3×3
+scatter matrix, which a page of Jacobi rotations decomposes exactly. The cost is
+real and worth naming — forming `XᵀX` before decomposing it squares the
+condition number, so about half the available significant digits go — and it is
+paid in a place where nothing needs them: an attitude is wanted to a hundredth
+of a degree, and the residual floor this imposes is around 1e-7 of the coordinate
+scale. Jacobi rather than the analytic solution of the characteristic cubic,
+which is faster and loses accuracy precisely on the nearly degenerate matrices
+this sees most.
+
+### What a straight trace cannot tell you
+
+The substantive departure from the reference. A plane is determined by a cloud
+of points only if the cloud spreads in **two** directions; the test is `s2/s1`,
+the second singular value against the first. Where the points fall along a line
+every plane through that line fits equally well, and the one returned is
+whichever direction rounding happened to favour — arbitrary, not imprecise, and
+with a residual that looks perfect either way.
+
+This is not an edge case. It is the ordinary condition for a contact crossing a
+smooth slope: two planes meet along one straight line. The method works on real
+terrain because rough ground makes the trace wander — up a spur, back down a
+gully — so a cell catches a genuinely two-dimensional patch of it. On a planar
+hillside it cannot work at all, and the honest output is nothing.
+
+The reference computes `s2/s1` as `logratio_s(1)`, writes it to its results file
+alongside two other ratios, and publishes an attitude regardless of any of them.
+Here it is `BestFitPlane::collinearity`, and cells above `max_collinearity` are
+counted in the statistics instead of entering the field.
+
+**Which ratio to test on is not obvious, and the plausible choice is wrong.**
+`-log10(s3/s2)` reads like the measure of a good plane and has, on the reference
+dataset, no power to separate at all: the two worst cells score *better* on it
+than most cells correct to a thousandth of a degree. When `s2` is itself
+rounding noise, a ratio taken against it is a ratio between two noises. That
+mistake was made here first and caught by measuring, which is the only reason
+this paragraph exists.
+
+### Against the reference
+
+geoSurfDEM's own Timpa San Lorenzo dataset — 1900 points, from intersecting two
+known planes (67.298/39 and 77.292/40) with a DEM, at 50 m cells:
+
+| | cells | error vs. the source plane, median | worst |
+| --- | --- | --- | --- |
+| misah | 288 | 0.0006° | **0.089°** |
+| C++ reference | 311 | 0.0007° | **38.4°** |
+
+On the 288 cells both accept, dip direction and dip angle agree to every one of
+the six decimals either writes — the Jacobi-on-scatter-matrix route reproduces
+LAPACK exactly where the fit is conditioned at all — and the point count per cell
+is identical, so the deduplication and cell assignment match too. The 23 misah
+sets aside are the difference. Three of them the reference publishes with
+attitudes 13.2°, 12.5° and 0.7° away from the plane that generated their own
+points; on the last, `s2` and `s3` are both zero, so its diagnostic column holds
+`-log10(0/0)` — a NaN printed beside a confident dip direction. The run takes
+6 ms.
+
+`DEFAULT_MAX_COLLINEARITY` is 3.0 for measured reasons rather than tasteful
+ones: on that dataset the sound cells run up to 3.3 and the wrong ones start at
+3.1, so the populations overlap and no threshold separates them cleanly. At 3.0
+the worst surviving attitude is 0.089° out; at 4.0, 0.873°; with no threshold,
+38.4°. Tenths of a degree are far below what a compass reading is worth, so this
+buys a margin nobody will measure, and buying more would discard sound cells to
+chase a precision the data does not have.
+
+Two smaller departures. Duplicate points are found by binning at the coincidence
+distance rather than by scanning every kept point, which is what the reference
+does — quadratic, invisible at 1900 points, not invisible at what the mesh kernel
+can produce. And coincidence is judged in three dimensions rather than two: for
+points off a DEM the two agree, since a single-valued surface cannot put two
+elevations at one map location, but for an overturned contact or a set of
+readings up a cliff the 2D test discards exactly the measurements that constrain
+a steep plane.
 
 ## Forward stress on a fault plane
 
@@ -171,8 +269,8 @@ the same five Fortran-verified cases.
 faults with their observed slip, it searches for the reduced stress tensor that
 best explains them. That search is what made the forward problem worth
 compiling, and what the sentence above was promising — one forward solution per
-candidate tensor per fault, which for the default grid of some 21 000
-candidates over a hundred faults is a couple of million of them.
+candidate tensor per fault, which for the default grid of 71 280 candidates
+over a hundred faults is seven million of them — 1.5 s.
 
 `FaultPlane` is the input, and is what connects a group of types that until now
 led nowhere: `Direction3D` was reached only by `Slickenline`, `Slickenline` only
@@ -206,11 +304,61 @@ The test that matters generates faults from a known tensor through the forward
 model and asks the inversion to recover it, which it does to within the grid
 step for a vertical-S1 and for a strike-slip setting alike.
 
-Not yet exposed to Python — the one part of the structural side that is not.
-The search is where being compiled matters most, so it is the obvious next
-binding; what it needs first is a decision about its own shape, since a caller
-handing over a hundred faults wants to pass arrays rather than build a hundred
-objects across the boundary.
+`invert_stress`, in `pylib`, is the Python surface of this, and it is where the
+question the other bindings did not have to answer came up: a caller handing
+over a hundred faults wants to pass arrays, not build a hundred objects across
+the pyo3 boundary. So the faults arrive as one `(N, 4)` array — strike, dip,
+and the trend and plunge of the slickenline — and the result comes back as a
+dict of dicts rather than as `InversionResult`, `ScoredTensor` and
+`ReducedStressTensor` exposed as types. Same rule as everywhere else on this
+surface: plain arrays and numbers in, arrays and dicts out.
+
+The slip sense is the one thing that could not be a column of that array
+without lying about itself. `SlipSense` has four variants and the search reads
+none of them — only whether the sense is known at all, the trend and plunge
+already saying which way the hanging wall moved. So the boundary carries a
+boolean per fault, `senses`, and not a code: `False` where nobody could read
+the sense, which is what puts that fault's misfit modulo 180 degrees. Omitting
+the array claims every sense was read. That is the right default for data taken
+as given, and the wrong one for a dataset where the sense went unrecorded —
+those faults would be scored at 180 degrees for fitting perfectly the other way
+round, which is the whole failure `Slickenline::angle_to` exists to prevent.
+`test_an_unread_sense_is_not_penalised` asserts both halves of that.
+
+A refusal names the row. `FaultPlane::new` indexes the offending slickenline
+within its own fault, which is always 0 here and tells a caller holding two
+hundred rows nothing, so the binding prefixes the fault's index — and it does
+refuse, rather than projecting the lineation onto the plane, because a
+lineation off its plane is two measurements that do not belong together and
+repairing it silently would invert data nobody measured.
+
+`inversion_candidate_count` sizes a run before starting it. The count is not
+the product a caller would guess — an axis pointing up is the axis pointing
+down, so plunge spans a quarter turn and the roll of S3 about S1 half a one —
+and halving both steps multiplies the work by about fourteen, which is worth
+knowing before starting rather than after.
+
+`score_stress` is the same misfit evaluated once, for a tensor that is not
+being looked for but tested: a published one against your own faults, or a
+runner-up against the subset you suspect belongs to a second phase. It returns
+the per-fault misfits as well as their mean, and a fault whose plane sits on a
+principal stress axis comes back `NaN` — no slip is predicted there, which is
+not the same as a slip predicted and missed, and is why it is left out of the
+mean rather than counted as zero.
+
+It takes no `sigma1`/`sigma3`, and that absence is the statement: scaling a
+tensor, or adding a multiple of the identity to it, leaves the shear direction
+where it was, the second because a purely normal traction has no shear to
+turn. So a misfit depends on the tensor's shape and nothing else, and offering
+magnitudes would invite the reading that they change the answer.
+
+`stress_tensor` is the matrix, `R . diag(sigma1, sigma2, sigma3) . R^T` in
+(East, North, Up) — the bridge from the axes-and-Phi form everything here works
+in to anything that wants the tensor itself. It exists because rebuilding it in
+Python means repeating the construction of the right-handed triad by hand, S3
+cross S1 and not the other way, which is a sign error waiting to happen. Unlike
+the misfit, this one does scale with the magnitudes: the 1/0 default gives the
+normalized tensor the search runs on, and the true values give the tensor.
 
 ## Python bindings
 
@@ -263,6 +411,22 @@ stats["duplicate_crossings"]
 ```
 
 ```python
+from misah.kernels import best_fit_planes
+
+# The points above, read back as attitudes. Any (N, 3) array will do.
+field, stats = best_fit_planes(points, cell_size=50.0)
+
+field["attitudes"]       # (M, 2) dip direction and dip angle, one per cell
+field["cell_centres"]    # (M, 2) where to post them
+field["collinearity"]    # (M,) how well each is determined; large is bad
+stats["cells_collinear"] # cells set aside: on a smooth slope, most of them
+```
+
+`field` is a dict of eight aligned arrays rather than a tuple, which eight
+positional returns would not survive being read. `None` where there is nothing
+to fit.
+
+```python
 from misah.kernels import solve_stress
 
 solution = solve_stress(
@@ -274,6 +438,43 @@ solution = solve_stress(
 )
 solution["theoretical_rake"]           # -90.0: pure normal dip-slip
 solution["theoretical_slickenline"]    # (90.0, 60.0), down the dip vector
+```
+
+```python
+from misah.kernels import invert_stress
+
+# (N, 4): fault RHR strike and dip, then the trend and plunge of the
+# slickenline on it. Every lineation must lie in its own plane to within a
+# degree, or the row is named and refused.
+result = invert_stress(
+    faults,
+    senses=None,             # (N,) bool: False where the sense was not read
+    angle_step_degrees=10.0,
+    phi_step=0.1,
+)
+
+result["best"]["s1"]                   # (trend, plunge)
+result["best"]["phi"]
+result["best"]["mean_misfit_degrees"]
+result["best"]["faults_scored"]        # how many faults that mean came from
+result["runners_up"]                   # the next five, worst last
+```
+
+`None` rather than a result when no candidate could be scored on any fault —
+an empty set. The GIL is released for the search, so a hundred faults on the
+default grid holds it for none of the 1.5 s they take.
+
+```python
+from misah.kernels import score_stress, stress_tensor
+
+# The same tensor, evaluated rather than searched for.
+score = score_stress(*best["s1"], *best["s3"], best["phi"], faults)
+score["mean_misfit_degrees"]
+score["misfits"]            # (N,) in the order given; NaN where none predicted
+
+# And as a matrix, in (East, North, Up).
+matrix = stress_tensor(*best["s1"], *best["s3"], best["phi"],
+                       sigma1=30.0, sigma3=10.0)
 ```
 
 The extension is built as `misah._misah`, so its submodules register themselves
@@ -307,9 +508,13 @@ platforms QGIS runs on — rather than in a second implementation of everything
 kept in reserve.
 
 The test files split by what they need, not by what they cover.
-`test_stress.py` and `test_mesh.py` are numbers in, numbers out, so both run in
-CI; `test_kernels.py` reads the Malpi crop from the geoSurfDEM repository and
-runs by hand. The DEM committed under `example_data` is a wider crop of the same
+`test_stress.py`, `test_mesh.py`, `test_inversion.py` and `test_best_fit.py`
+are numbers in, numbers out, so all four run in CI; `test_kernels.py` reads the Malpi crop
+from the geoSurfDEM repository and runs by hand. `test_inversion.py` needs no
+fixture at all, generating its faults through `solve_stress` from a tensor
+chosen in advance and asking the inversion to find that tensor again — the two
+halves of the Python surface checked against each other, rather than either
+against numbers copied over from the Rust tests. The DEM committed under `example_data` is a wider crop of the same
 ASTER tile — 213x260 against 200x247 — so it cannot stand in without rewriting
 the vertex counts those tests assert.
 
@@ -329,18 +534,19 @@ that nothing yet computes with — the next thing in this direction, and the one
 `structural::stress` would extend to, focal mechanisms being fault-slip data
 that arrives already reduced to a plane and a rake.
 
-The Python surface is five functions: `intersect_plane_grid`,
-`intersect_mesh_grid` and `plane_normal` for the raster side, `solve_stress`
-and `rake_to_slickenline` for the structural side. Each builds and consumes the
-types it needs within the one call rather than handing them across the
+The Python surface is ten functions: `intersect_plane_grid`,
+`intersect_mesh_grid`, `best_fit_planes` and `plane_normal` for the raster
+side, `solve_stress`,
+`rake_to_slickenline`, `stress_tensor`, `score_stress`, `invert_stress` and
+`inversion_candidate_count` for the structural side. Each builds and consumes
+the types it needs within the one call rather than handing them across the
 boundary, so the surface stays plain arrays and numbers in, arrays and dicts
 out.
 
-What remains Rust-only is `structural::inversion`, and the GeoProfiler SQLite
-reader. The reader is a different case from the others: Python has `sqlite3` in
-its standard library and can read a GeoProfiler export directly, so the Rust
-reader exists for Rust callers rather than standing between Python and the
-data.
+What remains Rust-only is the GeoProfiler SQLite reader, and deliberately:
+Python has `sqlite3` in its standard library and can read a GeoProfiler export
+directly, so the Rust reader exists for Rust callers rather than standing
+between Python and the data.
 
 `geoprofile::sqlite` reads a qgSurf GeoProfiler export — all thirteen tables of
 it — and `lib/tests` runs that against two: a schema-v1 export of the Timpa San
@@ -365,17 +571,74 @@ superseded by maturin and broken besides — `setup.py` used an `install_require
 it never defined.
 
 `.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
-the examples, gates on clippy, and installs the built wheel to run
-`pylib/tests/test_stress.py` against it — the Python bindings imported and
-called, not merely compiled. It stops short of building wheels for anything but
-that one Linux target.
+the examples, gates on clippy, and installs the built wheel to run the four
+data-free Python suites against it — the bindings imported and called, not
+merely compiled. On tags it also builds the wheels.
 
-Nothing yet builds wheels for anything but the host. A wheel built here is
-tagged `manylinux_2_34`, since the extension picks up the glibc it is compiled
-against, and will not install on Ubuntu 20.04, Debian 11 or RHEL 8. Wheels for
-macOS, Windows and aarch64 need runners for those platforms, which is a question
-about the GitLab plan rather than about the code, and until it is answered
-nothing in `lib` can reach a QGIS installation that is not this one.
+### Wheels
+
+A wheel built plainly on a development machine takes the glibc it happens to
+find: here that produced a `manylinux_2_34` tag, which pip will refuse to
+install on Ubuntu 20.04, Debian 11 or RHEL 8. That used to be the whole story,
+and the conclusion drawn from it — that nothing could reach a QGIS other than
+this one without macOS, Windows and aarch64 runners — was too pessimistic on
+three of the four platforms.
+
+Both Linux wheels are **cross-compiled with zig**, from the ordinary x86-64
+runner a GitLab Free namespace gets. `maturin --zig` links against a glibc
+chosen at build time rather than whichever the image carries, so the floor
+becomes a decision instead of an accident:
+
+| built by | tag | glibc actually required |
+| --- | --- | --- |
+| the host, plainly | `manylinux_2_34_x86_64` | 2.34 |
+| a `manylinux_2_28` container | `manylinux_2_28_x86_64` | 2.28 |
+| **zig, x86-64** | **`manylinux_2_17_x86_64`** | **2.14** |
+| **zig, aarch64** | **`manylinux_2_17_aarch64`** | **2.17** |
+
+The container route was tried first and works; zig reaches further and needs no
+container. Both zig wheels were verified: the x86-64 one installs and passes all
+four Python suites, and the aarch64 one carries a genuine ARM ELF — checked by
+`ci/check_wheel.py`, which reads the machine type out of the extension's own
+header rather than trusting the file name, since a cross-build that quietly
+produced a host binary would pass every other test in the pipeline.
+
+`abi3-py39` is what keeps this small: one wheel per platform rather than one per
+platform and interpreter version, so the whole matrix is five artifacts and the
+tag-only rule keeps it inside the Free tier's 400 compute minutes a month.
+
+**Windows was attempted twice and is not solved**, so there is no job for it
+here. Both attempts are worth recording, because neither failed for the reason
+one would guess and one of them is about this project rather than about the
+tooling.
+
+`rusqlite` is pulled in with the `bundled` feature, so every build compiles
+SQLite's C amalgamation — which makes a Windows cross-build need a C compiler
+for Windows, not only a Rust target. That is invisible on the Linux side
+because zig ships a C compiler; it is the whole difficulty on the Windows one.
+
+- **`x86_64-pc-windows-msvc` through cargo-xwin** downloads the Microsoft CRT
+  and SDK — around 2.5 GB — and then stops at `failed to find tool "clang-cl"`.
+  cargo-xwin supplies the headers and libraries but not the toolchain, which
+  wants `clang-cl`, `lld-link` and `llvm-lib` from LLVM. Fixable by installing
+  them; unattempted here because it is a system-package decision. Note that
+  the download alone is a real cost against a 400-minute monthly budget, and
+  large enough to sit awkwardly in a CI cache.
+- **`x86_64-pc-windows-gnu` through zig** gets further — SQLite compiles — and
+  fails at the link with `undefined symbol: PyInit_misah._misah`. That is this
+  package's `module-name = "misah._misah"` reaching the export-definition file
+  with its dot intact, where the initialiser Python actually looks for is
+  `PyInit__misah`. It is also the wrong target to want: CPython on Windows is
+  built with MSVC, and a GNU-ABI extension is not the supported configuration.
+
+So the way forward on Windows is LLVM plus the MSVC target, not the GNU one.
+
+**macOS is the other hole**, and there it is a licensing question before a
+technical one — cross-compiling needs the Apple SDK. The ways out are a hosted
+macOS runner (Premium/Ultimate, or free through the GitLab for Open Source
+programme, which this project's GPL-3 licence and public namespace should
+qualify it for), or a mirror onto a service that gives macOS runners to public
+repositories.
 
 `docs/notebooks/misah.ipynb` is gone rather than repaired. Every path in it was
 dead, not merely the one previously named here: `misah.geometry.geom2d`,

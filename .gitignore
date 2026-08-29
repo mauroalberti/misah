@@ -23,3 +23,11 @@ __pycache__/
 # fixture -- read-only at that -- drops these beside it.
 *.gpkg-shm
 *.gpkg-wal
+
+# gfortran writes a module file per module into the working directory, so
+# compiling the reference sources this crate is ported from -- geoSurfDEM's
+# GeoInversions, Alberti (2010)'s GeoFaults -- leaves them here.
+*.mod
+
+# Wheels are built into this by the packaging stage.
+/wheels/

@@ -37,7 +37,7 @@ pub struct SearchGrid {
 }
 
 impl Default for SearchGrid {
-    /// Ten degrees and 0.1: about 21 000 candidates, coarse enough to run in a
+    /// Ten degrees and 0.1: 71 280 candidates, coarse enough to run in a
     /// moment and fine enough to place a tensor within the scatter of the
     /// measurements it is inverted from, which no fault-slip dataset beats.
     fn default() -> Self {

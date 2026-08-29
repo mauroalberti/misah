@@ -1,5 +1,6 @@
 
 pub mod constants;
+pub mod eigen;
 pub mod vector;
 pub mod versor;
 pub mod error;

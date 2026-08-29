@@ -1,8 +1,16 @@
-# Tests on Linux, at every push.
+# Tests on Linux at every push, and wheels on tags.
 #
-# This covers correctness only. It does not build the wheels the project exists
-# to ship: those need macOS, Windows and aarch64 runners, and are a separate
-# question from whether the code is right. What is here runs anywhere.
+# Everything here runs on the Linux runners a GitLab Free namespace gets, which
+# is less of a restriction than it sounds: both Linux wheels are cross-compiled
+# with zig from the same x86-64 runner, and `abi3-py39` means one wheel per
+# platform rather than one per platform and interpreter.
+#
+# macOS is the hole. It cannot be cross-compiled from here without the Apple
+# SDK, which is a licensing question before it is a technical one, so the
+# options are a hosted macOS runner -- Premium/Ultimate, or free through the
+# GitLab for Open Source programme, which this project's GPL-3 licence and
+# public namespace should qualify it for -- or a mirror onto a service that
+# gives macOS runners to public repositories.
 
 default:
   # The latest stable 1.x on Debian bookworm. Floating within the major version
@@ -24,6 +32,10 @@ variables:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Tags, or the wheel stage could never run: on a tag pipeline
+    # `$CI_COMMIT_BRANCH` is empty, so without this none of the rules below
+    # match and no pipeline is created at all.
+    - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
@@ -41,6 +53,7 @@ cache:
 
 stages:
   - test
+  - package
 
 # The kernel crate, which is where every test lives and which depends on no
 # interpreter. Kept apart from the workspace build for that reason: whatever
@@ -99,7 +112,7 @@ lint:clippy:
 # boundary, or whether a pyo3 signature default resolves. Those are separate
 # claims, and this suite has already caught one of them.
 #
-# The two data-free suites run here. `test_kernels.py` reads the Malpi crop
+# The four data-free suites run here. `test_kernels.py` reads the Malpi crop
 # from the geoSurfDEM repository, which is not in this tree and whose row and
 # column counts its expected vertex counts depend on; the DEM committed under
 # `example_data` is a wider crop of the same ASTER tile, so it cannot stand in
@@ -124,3 +137,74 @@ test:python:
     # installed package.
     - python3 pylib/tests/test_stress.py
     - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# ---------------------------------------------------------------------------
+# Wheels
+# ---------------------------------------------------------------------------
+#
+# The distribution, as opposed to the correctness the stage above checks. Only
+# on tags: a wheel from an untagged commit is not something anyone installs,
+# and the Free tier's 400 compute minutes a month are better spent than on
+# rebuilding one per push.
+#
+# `abi3-py39` is what makes this small. The extension links no version-specific
+# CPython symbol, so it is one wheel per *platform* rather than one per platform
+# and interpreter version -- five artifacts instead of thirty.
+#
+# Both Linux targets are cross-compiled with zig, which is not a workaround for
+# lacking runners so much as the better tool. `maturin --zig` links against a
+# glibc chosen at build time rather than whichever the runner happens to carry,
+# so the wheel comes out tagged `manylinux_2_17` -- the compatibility floor is
+# a decision instead of an accident of the image. Building natively in a
+# `quay.io/pypa/manylinux_2_28_x86_64` container was tried first and works, but
+# reaches only 2.28 and needs a container to do it.
+.wheel:
+  stage: package
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    # PEP 668 marks the Debian interpreter externally managed, so pip needs a
+    # virtualenv even here. zig arrives through pip as well, which keeps this
+    # job free of any system package beyond the interpreter.
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+    - python3 -m venv /tmp/venv
+    - . /tmp/venv/bin/activate && pip install -q maturin ziglang cargo-zigbuild
+  artifacts:
+    paths:
+      - wheels/
+    expire_in: 1 month
+
+# The one wheel this pipeline can do more than build: the runner is x86-64
+# Linux, so the artifact can be installed and the test suites run against it.
+# That is a stronger claim than `test:python` makes -- that job builds for the
+# host, this one checks the cross-compiled article a user would actually get.
+wheel:linux:x86_64:
+  extends: .wheel
+  script:
+    - . /tmp/venv/bin/activate
+    - rustup target add x86_64-unknown-linux-gnu
+    - cd pylib && maturin build --release --zig --target x86_64-unknown-linux-gnu --out ../wheels
+    - cd ..
+    - python3 ci/check_wheel.py 'wheels/*x86_64*.whl' x86_64
+    - pip install -q numpy && pip install --no-index wheels/*x86_64*.whl
+    - python3 pylib/tests/test_stress.py
+    - python3 pylib/tests/test_mesh.py
+    - python3 pylib/tests/test_inversion.py
+    - python3 pylib/tests/test_best_fit.py
+
+# Nothing here can run an aarch64 binary, so the check is what can be checked
+# without executing it: that the extension inside the wheel really is ARM, and
+# that its glibc requirements match the tag the wheel claims. A cross-build
+# that silently produced a host binary would pass every other test in this
+# file.
+wheel:linux:aarch64:
+  extends: .wheel
+  script:
+    - . /tmp/venv/bin/activate
+    - rustup target add aarch64-unknown-linux-gnu
+    - cd pylib && maturin build --release --zig --target aarch64-unknown-linux-gnu --out ../wheels
+    - cd ..
+    - python3 ci/check_wheel.py 'wheels/*aarch64*.whl' aarch64
