@@ -580,11 +580,16 @@ Manual because a version is final once uploaded — PyPI and crates.io alike
 refuse to replace one — so the tag builds and checks the artifacts, and someone
 then decides. `git push --tags` stays reversible; pressing the button does not.
 PyPI goes through Trusted Publishing, so no token is stored in this project:
-GitLab mints an OIDC token for the job and PyPI exchanges it for one good for a
-few minutes. That needs configuring once on the PyPI side, as a pending
-publisher before the first release exists. crates.io takes the kernel crate
-alone; `misah-py` is the extension, depends on `misah` by path rather than by
-version, and is not something anyone adds to a Cargo.toml.
+GitLab mints an OIDC token for the job and twine trades it for a short-lived
+upload token itself. A publisher is registered per PyPI project rather than per
+account, so this one is its own — a *pending* publisher until `misah` exists
+there, converted to an ordinary one by the first upload. crates.io takes the
+kernel crate alone; `misah-py` is the extension, depends on `misah` by path
+rather than by version, and is not something anyone adds to a Cargo.toml.
+
+The two registries are independent, and nothing here makes one wait for the
+other: the sdist carries `lib/` inside it, so the Python distribution builds
+without `misah` ever reaching crates.io.
 
 ### One version number
 

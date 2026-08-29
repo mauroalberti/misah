@@ -267,14 +267,18 @@ wheel:sdist:
 # PyPI, the crate is `misah` on crates.io, and one can go out without the other.
 
 # PyPI through Trusted Publishing, so no token is stored anywhere in this
-# project. GitLab mints a short-lived OIDC token for the job, PyPI exchanges it
-# for an upload token good for a few minutes, and twine uses that.
+# project: GitLab mints a short-lived OIDC token for the job, and twine trades it
+# for an upload token itself. Nothing here does that exchange by hand -- twine
+# does it when it finds `PYPI_ID_TOKEN` and no credentials, which is also how
+# geogst publishes.
 #
-# It needs configuring once on the PyPI side, under the project's Publishing
-# settings: namespace `mauroalberti`, project `misah`, top-level pipeline file
-# `.gitlab-ci.yml`, environment left empty. For the first upload, when the
-# project does not exist yet, that is a "pending publisher" instead -- same
-# fields, created before the first release rather than after.
+# It needs configuring once on the PyPI side, and a publisher is per project
+# rather than per account -- being one for geogst grants nothing here. Since
+# `misah` does not exist on PyPI yet, that means a *pending* publisher, created
+# from the account sidebar under Publishing: PyPI project name `misah`,
+# namespace `mauroalberti`, repository `misah`, pipeline file `.gitlab-ci.yml`,
+# environment `release` to match the job below. It becomes an ordinary publisher
+# on the first successful upload.
 publish:pypi:
   stage: publish
   rules:
@@ -287,21 +291,25 @@ publish:pypi:
   id_tokens:
     PYPI_ID_TOKEN:
       aud: pypi
+  # Optional to PyPI, and worth having: an environment is what lets a release be
+  # gated on approval by whoever is allowed to deploy to it, rather than on
+  # whoever can press a manual job. The name has to match what the publisher was
+  # registered with, or PyPI rejects the token.
+  environment:
+    name: release
+    url: https://pypi.org/project/misah/
   before_script:
     - apt-get update -qq
     - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
     - python3 -m venv /tmp/venv
-    - . /tmp/venv/bin/activate && pip install -q twine
+    - . /tmp/venv/bin/activate && pip install -q --upgrade twine
   script:
     - . /tmp/venv/bin/activate
     # Everything the package stage built: two wheels and the tarball.
     - ls -l wheels/
     - twine check wheels/*
-    - |
-      api_token=$(curl -sS -X POST https://pypi.org/_/oidc/mint-token \
-        -d "{\"token\":\"${PYPI_ID_TOKEN}\"}" \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
-    - TWINE_USERNAME=__token__ TWINE_PASSWORD="${api_token}" twine upload wheels/*
+    # No credentials given, so twine uses Trusted Publishing.
+    - twine upload wheels/*
 
 # crates.io, which takes the kernel crate alone. `misah-py` is not published
 # there: it is the extension, it depends on `misah` by path rather than by
