@@ -378,7 +378,8 @@ the aliases `misah/__init__.py` sets up.
 cd pylib
 maturin develop --release   # build and install into the active environment
 maturin build --release     # produce a wheel under target/wheels
-python3 tests/test_kernels.py
+cd ..
+python3 pylib/tests/test_kernels.py   # never from pylib, which shadows the install
 ```
 
 ```python
@@ -507,16 +508,27 @@ is the same problem as the wheels, and belongs there — building for the
 platforms QGIS runs on — rather than in a second implementation of everything
 kept in reserve.
 
-The test files split by what they need, not by what they cover.
-`test_stress.py`, `test_mesh.py`, `test_inversion.py` and `test_best_fit.py`
-are numbers in, numbers out, so all four run in CI; `test_kernels.py` reads the Malpi crop
-from the geoSurfDEM repository and runs by hand. `test_inversion.py` needs no
-fixture at all, generating its faults through `solve_stress` from a tensor
-chosen in advance and asking the inversion to find that tensor again — the two
-halves of the Python surface checked against each other, rather than either
-against numbers copied over from the Rust tests. The DEM committed under `example_data` is a wider crop of the same
-ASTER tile — 213x260 against 200x247 — so it cannot stand in without rewriting
-the vertex counts those tests assert.
+All five Python suites run in CI. `test_stress.py`, `test_mesh.py`,
+`test_inversion.py` and `test_best_fit.py` are numbers in, numbers out;
+`test_inversion.py` needs no fixture at all, generating its faults through
+`solve_stress` from a tensor chosen in advance and asking the inversion to find
+that tensor again — the two halves of the Python surface checked against each
+other, rather than either against numbers copied over from the Rust tests.
+
+`test_kernels.py` needs a DEM, and used to read the Malpi crop from a checkout
+of geoSurfDEM sitting beside this one, which meant the raster bindings — the
+half of the surface with a golden trace to be measured against — were the half
+nobody but the author could check. They are now checked by anyone with this
+repository. The crop committed under `example_data` is a wider window on the
+same ASTER tile, 213 x 260 against 200 x 247, and *wider on the same grid*:
+the golden crop's corner is exactly seven cells in from it, east and north, and
+the elevations agree value for value over the overlap. So the suite cuts the
+200 x 247 window out of the committed file and intersects that, which is not a
+substitute for the grid the trace was computed on but that grid itself — 404
+vertices, unchanged, from data in this tree. The window is derived from the
+golden crop's own corner coordinates rather than written down as four array
+indices, so a committed DEM that stopped containing it would fail the suite
+instead of quietly moving the trace onto different ground.
 
 Run the tests from anywhere except `pylib` itself, whose source tree shadows the
 installed package.
@@ -571,9 +583,9 @@ superseded by maturin and broken besides — `setup.py` used an `install_require
 it never defined.
 
 `.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
-the examples, gates on clippy, and installs the built wheel to run the four
-data-free Python suites against it — the bindings imported and called, not
-merely compiled. On tags it also builds the two wheels and the source
+the examples, gates on clippy, and installs the built wheel to run all five
+Python suites against it — the bindings imported and called, not merely
+compiled. On tags it also builds the two wheels and the source
 distribution, and offers two manual jobs that upload them.
 
 Manual because a version is final once uploaded — PyPI and crates.io alike

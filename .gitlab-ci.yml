@@ -119,12 +119,13 @@ lint:clippy:
 # boundary, or whether a pyo3 signature default resolves. Those are separate
 # claims, and this suite has already caught one of them.
 #
-# The four data-free suites run here. `test_kernels.py` reads the Malpi crop
-# from the geoSurfDEM repository, which is not in this tree and whose row and
-# column counts its expected vertex counts depend on; the DEM committed under
-# `example_data` is a wider crop of the same ASTER tile, so it cannot stand in
-# without rewriting those numbers. Until one of the two is resolved, the raster
-# bindings stay verified by hand.
+# All five suites run here, the raster one included. `test_kernels.py` reads
+# the Malpi crop from `example_data` and cuts out of it the 200 x 247 window
+# geoSurfDEM computed the golden trace on: the two crops sit on one grid, seven
+# cells apart in each direction, so the wider one committed here contains the
+# narrower value for value and the expected vertex counts carry over unchanged.
+# What used to need a second repository on the machine now needs this checkout
+# and nothing else.
 test:python:
   stage: test
   before_script:
@@ -146,6 +147,7 @@ test:python:
     - python3 pylib/tests/test_mesh.py
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
+    - python3 pylib/tests/test_kernels.py
 
 # ---------------------------------------------------------------------------
 # Wheels and the source distribution
@@ -206,6 +208,7 @@ wheel:linux:x86_64:
     - python3 pylib/tests/test_mesh.py
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
+    - python3 pylib/tests/test_kernels.py
 
 # Nothing here can run an aarch64 binary, so the check is what can be checked
 # without executing it: that the extension inside the wheel really is ARM, and
@@ -253,6 +256,7 @@ wheel:sdist:
     - python3 pylib/tests/test_mesh.py
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
+    - python3 pylib/tests/test_kernels.py
 
 # ---------------------------------------------------------------------------
 # Publishing

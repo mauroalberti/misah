@@ -1,8 +1,8 @@
 """Check the mesh-grid binding: a surface of arbitrary shape cut against a DEM.
 
-Data-free, like `test_stress.py`, so the CI can run it: the grids and meshes
-here are built in a few lines rather than read from the geoSurfDEM crop that
-`test_kernels.py` needs. The kernel itself is checked against that crop by the
+Data-free, like `test_stress.py`: the grids and meshes here are built in a few
+lines rather than read from the Malpi crop that `test_kernels.py` cuts its
+golden window out of. The kernel itself is checked against that crop by the
 Rust tests and by `lib/examples/mesh_dem_vtk.rs`; what this file is for is the
 binding -- array shapes, index handling, and the statistics dict.
 

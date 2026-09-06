@@ -1,9 +1,8 @@
 """Check the forward-stress bindings against the Fortran-verified values.
 
-Apart from the other test file in that it needs no data: everything here is
-numbers in, numbers out, so it is the one Python suite the CI can run without a
-DEM from another repository. `test_kernels.py` reads the geoSurfDEM Malpi crop,
-which lives outside this tree, and so still runs only by hand.
+Apart from `test_kernels.py` in that it needs no data: everything here is
+numbers in, numbers out, where that suite reads a DEM. It reads it from
+`example_data` in this tree, though, so both run in CI.
 
 The five cases are the ones checked against ForwardStress.f95 itself, and carry
 the same values `structural::stress`'s own Rust tests and geogst's port of the
