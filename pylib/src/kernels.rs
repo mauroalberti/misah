@@ -309,7 +309,7 @@ fn intersect_mesh_grid<'py>(
 /// came from: `FaultPlane`'s own error indexes the slickenline within its
 /// fault, which is always 0 here and would leave a caller with two hundred
 /// rows and no idea which one to look at.
-fn faults_from_rows(
+pub(crate) fn faults_from_rows(
     faults: &PyReadonlyArray2<'_, f64>,
     senses: Option<&PyReadonlyArray1<'_, bool>>,
 ) -> PyResult<Vec<FaultPlane>> {
@@ -365,7 +365,7 @@ fn faults_from_rows(
 /// forever rather than return nothing, and a NaN would leave every comparison
 /// false and end the loop before its first iteration. Neither is a grid, and
 /// both are worth refusing at the boundary where the number arrives.
-fn checked_grid(angle_step_degrees: f64, phi_step: f64) -> PyResult<SearchGrid> {
+pub(crate) fn checked_grid(angle_step_degrees: f64, phi_step: f64) -> PyResult<SearchGrid> {
 
     let usable = |step: f64| step.is_finite() && step > 0.0;
 

@@ -119,7 +119,7 @@ lint:clippy:
 # boundary, or whether a pyo3 signature default resolves. Those are separate
 # claims, and this suite has already caught one of them.
 #
-# All five suites run here, the raster one included. `test_kernels.py` reads
+# All six suites run here, the raster one included. `test_kernels.py` reads
 # the Malpi crop from `example_data` and cuts out of it the 200 x 247 window
 # geoSurfDEM computed the golden trace on: the two crops sit on one grid, seven
 # cells apart in each direction, so the wider one committed here contains the
@@ -148,6 +148,7 @@ test:python:
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
     - python3 pylib/tests/test_kernels.py
+    - python3 pylib/tests/test_fields.py
 
 # ---------------------------------------------------------------------------
 # Wheels and the source distribution
@@ -209,6 +210,7 @@ wheel:linux:x86_64:
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
     - python3 pylib/tests/test_kernels.py
+    - python3 pylib/tests/test_fields.py
 
 # Nothing here can run an aarch64 binary, so the check is what can be checked
 # without executing it: that the extension inside the wheel really is ARM, and
@@ -257,6 +259,7 @@ wheel:sdist:
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
     - python3 pylib/tests/test_kernels.py
+    - python3 pylib/tests/test_fields.py
 
 # ---------------------------------------------------------------------------
 # Publishing

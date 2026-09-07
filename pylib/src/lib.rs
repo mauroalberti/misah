@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod fields;
 mod kernels;
 
 /// Attach a submodule and make it importable.
@@ -28,6 +29,12 @@ fn add_submodule(
 
 #[pymodule]
 fn _misah(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    add_submodule(m, "kernels", kernels::register)?;
+    // Two Rust files, one Python module. `fields.rs` was split off `kernels.rs`
+    // for length, and a second import path would have made a decision about
+    // source layout into something callers have to know.
+    add_submodule(m, "kernels", |kernels| {
+        kernels::register(kernels)?;
+        fields::register(kernels)
+    })?;
     Ok(())
 }
