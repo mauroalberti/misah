@@ -18,6 +18,8 @@
 //! natural reading order of a map sheet; the two are different conventions on
 //! purpose, and neither is a grid of the other's kind.
 
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+
 use crate::geometry::point::Point;
 
 /// Where a field is sampled: a first node, a step along each axis, and how
@@ -156,6 +158,27 @@ impl<const N: usize> SamplingGrid<N> {
     /// Every node, in the flat ordering, paired with its position.
     pub fn nodes(&self) -> impl Iterator<Item = (usize, Point<N>)> + '_ {
         (0..self.node_count()).map(move |flat| {
+            (flat, self.node_at(flat).expect("flat index is within the grid"))
+        })
+    }
+
+    /// The same, to be walked in parallel.
+    ///
+    /// Deliberately **indexed**: it comes from a range rather than from a
+    /// chain of adaptors that has lost its length, so `collect` into a `Vec`
+    /// puts node `k` at position `k` whatever order the threads finished in.
+    /// That is what lets a field say its output does not depend on the number
+    /// of threads -- the assignment of nodes to threads changes and nothing
+    /// else does, because each node's own arithmetic is a sequential sum over
+    /// its own neighbourhood either way.
+    ///
+    /// The position is recomputed per node from the flat index rather than
+    /// carried along, which is a handful of divisions against whatever the
+    /// caller is about to do at that node. It is the reason this can be a
+    /// range in the first place, and ranges are the only thing rayon splits
+    /// for free.
+    pub fn par_nodes(&self) -> impl IndexedParallelIterator<Item = (usize, Point<N>)> + '_ {
+        (0..self.node_count()).into_par_iter().map(move |flat| {
             (flat, self.node_at(flat).expect("flat index is within the grid"))
         })
     }

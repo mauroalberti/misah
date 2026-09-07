@@ -21,8 +21,18 @@
 //! -- is not refused here but falls back to visiting everything. It gives the
 //! same answer, more slowly, and it is the kernel to reach for when a result
 //! is being checked against something that did the same.
+//!
+//! ## Threads
+//!
+//! A field is embarrassingly parallel: nodes do not read each other, and the
+//! index they all read is immutable once built. `density_field` therefore walks
+//! the grid across every core rayon offers, and returns exactly what it
+//! returned before -- see `density_field`'s own note on why "exactly" is the
+//! right word and not an approximation of it.
 
 use std::collections::HashMap;
+
+use rayon::iter::ParallelIterator;
 
 use crate::geometry::located::Located;
 use crate::geometry::point::Point;
@@ -192,18 +202,37 @@ fn bin_of<const N: usize>(place: &Point<N>, bin_size: &[f64; N]) -> [i64; N] {
 /// in two dimensions, and so on -- so that summed over the grid and multiplied
 /// by the cell volume it approaches the number of observations, less whatever
 /// the kernel's own truncation drops and whatever falls outside the grid.
-pub fn density_field<T, const N: usize>(
+///
+/// Runs across rayon's thread pool, and gives **bit-for-bit** the answer a
+/// single thread would. That is worth spelling out, because it is the property
+/// most parallel numerics quietly lose: a reduction that lets threads combine
+/// partial sums adds the same terms in an order that depends on how the work
+/// happened to be split, so the last bits move when the machine changes, and a
+/// result stops being reproducible. Nothing of the kind happens here. The
+/// parallelism is over nodes, and a node's value is a sequential sum over its
+/// own neighbourhood in the order `near_into` reports -- which is fixed by the
+/// bin layout and not by the schedule. Threads never share an accumulator.
+///
+/// The index is built once, before the split, and only read afterwards. Each
+/// thread keeps its own scratch vector for the neighbour list, via `map_init`,
+/// which is the one thing the sequential version got for free by reusing a
+/// single vector across the whole grid.
+///
+/// How many threads is rayon's business, not this crate's. To bound it --
+/// inside a QGIS plugin, say, where taking every core makes the host stop
+/// repainting -- build a `rayon::ThreadPoolBuilder` and call this from within
+/// its `install`.
+pub fn density_field<T: Sync, const N: usize>(
     observations: &[Located<T, N>],
     grid: &SamplingGrid<N>,
     kernel: Kernel<N>,
 ) -> Vec<f64> {
 
     let neighbourhood = Neighbourhood::new(observations, kernel);
-    let mut found = Vec::new();
 
-    grid.nodes()
-        .map(|(_, place)| {
-            neighbourhood.near_into(&place, &mut found);
+    grid.par_nodes()
+        .map_init(Vec::new, |found, (_, place)| {
+            neighbourhood.near_into(&place, found);
             found.iter().map(|(_, weight)| weight).sum()
         })
         .collect()
@@ -401,6 +430,51 @@ mod tests {
             assert_eq!(first.near(&place), second.near(&place));
             assert_eq!(first.density_at(&place), second.density_at(&place));
         }
+    }
+
+    #[test]
+    fn the_threaded_field_is_the_sequential_one_bit_for_bit() {
+        // Not "close to": equal. The field is parallel over nodes and each
+        // node's sum stays sequential, so no accumulator is ever shared and no
+        // term changes position. `assert_eq!` on f64 is the right assertion
+        // here and would be the wrong one for almost any other parallel sum --
+        // which is the point of making it.
+        let mut observations = Vec::new();
+        let mut seed = 987654321u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 31) as f64) * 4000.0 - 2000.0
+        };
+        for _ in 0..500 {
+            observations.push(at([next(), next(), next()]));
+        }
+
+        let kernel = Kernel::quartic(Bandwidth::new([400.0, 400.0, 150.0]).unwrap());
+        let grid = SamplingGrid::<3>::new(
+            Point::from([-2000.0, -2000.0, -2000.0]),
+            [250.0, 250.0, 400.0],
+            [17, 17, 11],
+        )
+        .unwrap();
+
+        // The same computation written out node by node, on this thread.
+        let neighbourhood = Neighbourhood::new(&observations, kernel);
+        let sequential: Vec<f64> = grid
+            .nodes()
+            .map(|(_, place)| neighbourhood.density_at(&place))
+            .collect();
+
+        assert_eq!(density_field(&observations, &grid, kernel), sequential);
+
+        // And on a pool of one, which is the other way a caller might expect
+        // the answer to shift.
+        let single = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap()
+            .install(|| density_field(&observations, &grid, kernel));
+
+        assert_eq!(single, sequential);
     }
 
     #[test]

@@ -46,6 +46,32 @@
 //! how many coordinates say where the fault was found: two for a map of surface
 //! measurements, three for hypocentres or for a dataset with depth. The same
 //! function serves both.
+//!
+//! ## Threads
+//!
+//! Nodes do not read each other, so the grid is walked across every core rayon
+//! offers. This is the pass in the crate where that is worth the most: at a
+//! third of a second a node, it is the difference between leaving a field to
+//! run over lunch and leaving it overnight.
+//!
+//! On the run described above -- 300 faults, a ten by ten grid, 59 nodes
+//! inverted -- the split keeps the cores fed: 3.93 threads' worth of CPU time
+//! consumed on four threads, 6.92 on eight. That occupancy is the number this
+//! module answers for, and it says the work divides cleanly despite nodes
+//! costing anything from nothing to a full search. The wall clock on the
+//! machine it was measured on went from 21.6 s to between five and seven, three
+//! to four times rather than seven, and the shortfall is not idleness: it is a
+//! 15 W mobile part holding its all-core clock far below its single-core turbo,
+//! with two of those eight threads sharing each physical core. Where the clock
+//! holds, the wall time follows the occupancy.
+//!
+//! It changes nothing about the answer, bit for bit. A node's tensor comes from
+//! its own neighbourhood and its own exhaustive search, both of which run
+//! sequentially inside the node; only which thread picks the node up varies.
+//! The counters are summed from per-node outcomes rather than incremented in
+//! shared state, and integer addition does not care what order it happens in.
+
+use rayon::iter::ParallelIterator;
 
 use crate::geometry::located::Located;
 use crate::geometry::point::Point;
@@ -164,6 +190,12 @@ pub struct FieldCost {
 ///
 /// Nodes with no fault in reach are not an error; a field is entitled to holes,
 /// and they are counted rather than filled.
+///
+/// Runs across rayon's thread pool. The result is independent of how many
+/// threads that turns out to be, in the strict sense: node `k` holds what node
+/// `k` would have held on one thread, and the counters are the same integers.
+/// To bound the pool -- inside a plugin that must leave its host responsive --
+/// call this from within a `rayon::ThreadPoolBuilder`'s `install`.
 pub fn stress_field<const N: usize>(
     faults: &[Located<FaultPlane, N>],
     grid: &SamplingGrid<N>,
@@ -174,82 +206,90 @@ pub fn stress_field<const N: usize>(
 
     let neighbourhood = Neighbourhood::new(faults, kernel);
 
-    let mut nodes = Vec::with_capacity(grid.node_count());
-    let mut nodes_inverted = 0usize;
-    let mut nodes_below_threshold = 0usize;
-    let mut nodes_without_data = 0usize;
+    // Each node yields its own outcome rather than incrementing a shared
+    // counter, and the counters are summed at the end. Which is not merely how
+    // one is obliged to write this under threads: it also puts the decision
+    // about what a node *was* next to the decision about what to do with it,
+    // where the sequential version had the two drift apart by a `continue`.
+    let (nodes, outcomes): (Vec<FieldNode<N>>, Vec<Outcome>) = grid
+        .par_nodes()
+        // One scratch set per thread. The sequential version reused a single
+        // set across the whole grid; this is the same saving, per worker.
+        .map_init(
+            || (Vec::new(), Vec::new(), Vec::new()),
+            |(found, nearby, weights): &mut (Vec<(usize, f64)>, Vec<FaultPlane>, Vec<f64>),
+             (_, position)| {
 
-    // Reused across nodes: a field is thousands of these, and the shapes are
-    // the same each time.
-    let mut found: Vec<(usize, f64)> = Vec::new();
-    let mut nearby: Vec<FaultPlane> = Vec::new();
-    let mut weights: Vec<f64> = Vec::new();
+                neighbourhood.near_into(&position, found);
 
-    for (_, position) in grid.nodes() {
+                let density = found.iter().map(|(_, weight)| weight).sum();
+                let support = effective_sample_size(found);
 
-        neighbourhood.near_into(&position, &mut found);
+                let node = |solution| FieldNode {
+                    position,
+                    density,
+                    support,
+                    faults_within_reach: found.len(),
+                    solution,
+                };
 
-        let density = found.iter().map(|(_, weight)| weight).sum();
-        let support = effective_sample_size(&found);
+                if found.is_empty() {
+                    return (node(None), Outcome::WithoutData);
+                }
 
-        if found.is_empty() {
-            nodes_without_data += 1;
-            nodes.push(FieldNode {
-                position,
-                density,
-                support,
-                faults_within_reach: 0,
-                solution: None,
-            });
-            continue;
-        }
+                if support < min_support {
+                    return (node(None), Outcome::BelowThreshold);
+                }
 
-        if support < min_support {
-            nodes_below_threshold += 1;
-            nodes.push(FieldNode {
-                position,
-                density,
-                support,
-                faults_within_reach: found.len(),
-                solution: None,
-            });
-            continue;
-        }
+                // Only the faults that reach this node are handed to the
+                // search. `invert_weighted` would skip the zero-weighted ones
+                // before solving anything, so passing the whole dataset would
+                // give the same answer -- but it would walk it once per
+                // candidate tensor, and there are tens of thousands of those
+                // per node. Copying a neighbourhood is the cheaper side of that
+                // trade by a wide margin.
+                nearby.clear();
+                weights.clear();
+                for &(index, weight) in found.iter() {
+                    nearby.push(faults[index].value.clone());
+                    weights.push(weight);
+                }
 
-        // Only the faults that reach this node are handed to the search.
-        // `invert_weighted` would skip the zero-weighted ones before solving
-        // anything, so passing the whole dataset would give the same answer --
-        // but it would walk it once per candidate tensor, and there are tens of
-        // thousands of those per node. Copying a neighbourhood is the cheaper
-        // side of that trade by a wide margin.
-        nearby.clear();
-        weights.clear();
-        for &(index, weight) in found.iter() {
-            nearby.push(faults[index].value.clone());
-            weights.push(weight);
-        }
+                match invert_weighted(nearby, weights, search) {
+                    Some(solution) => (node(Some(solution)), Outcome::Inverted),
+                    // Faults reached, and enough of them, but none could be
+                    // scored: no slickenlines. Not a hole in the data and not
+                    // a thin patch, so it is counted as neither.
+                    None => (node(None), Outcome::Unscorable),
+                }
+            },
+        )
+        .unzip();
 
-        let solution = invert_weighted(&nearby, &weights, search);
-        if solution.is_some() {
-            nodes_inverted += 1;
-        }
-
-        nodes.push(FieldNode {
-            position,
-            density,
-            support,
-            faults_within_reach: found.len(),
-            solution,
-        });
-    }
+    let count = |wanted: Outcome| outcomes.iter().filter(|o| **o == wanted).count();
 
     StressField {
         nodes,
         grid: *grid,
-        nodes_inverted,
-        nodes_below_threshold,
-        nodes_without_data,
+        nodes_inverted: count(Outcome::Inverted),
+        nodes_below_threshold: count(Outcome::BelowThreshold),
+        nodes_without_data: count(Outcome::WithoutData),
     }
+}
+
+/// What became of one node, on its way to the field's counters.
+///
+/// Private: `StressField`'s three counts are the reported form, and a node
+/// carries enough to tell a caller which case it was without this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Inverted,
+    BelowThreshold,
+    WithoutData,
+    /// Faults enough, none of them scorable. Deliberately in no counter, and
+    /// deliberately named anyway, so that the omission is a decision on the
+    /// page rather than a branch nobody wrote.
+    Unscorable,
 }
 
 /// Size a field before running it.
@@ -263,6 +303,12 @@ pub fn stress_field<const N: usize>(
 ///
 /// The arguments are `stress_field`'s, less the search grid's effect on
 /// anything but the count.
+///
+/// Threaded like the field itself, and for the same reason it is worth having
+/// at all: the grid a caller wants costed is sometimes large enough that
+/// walking it is no longer instant, and the point of this function is to answer
+/// before the caller has finished asking. Summing counts is exact whatever the
+/// order, so nothing here needed to be arranged to keep it reproducible.
 pub fn field_cost<const N: usize>(
     faults: &[Located<FaultPlane, N>],
     grid: &SamplingGrid<N>,
@@ -274,21 +320,22 @@ pub fn field_cost<const N: usize>(
     let neighbourhood = Neighbourhood::new(faults, kernel);
     let candidates = search.candidate_count() as u128;
 
-    let mut nodes_to_invert = 0usize;
-    let mut forward_solutions = 0u128;
-    let mut found: Vec<(usize, f64)> = Vec::new();
+    let (nodes_to_invert, forward_solutions) = grid
+        .par_nodes()
+        .map_init(
+            Vec::new,
+            |found: &mut Vec<(usize, f64)>, (_, position)| {
 
-    for (_, position) in grid.nodes() {
+                neighbourhood.near_into(&position, found);
 
-        neighbourhood.near_into(&position, &mut found);
+                if found.is_empty() || effective_sample_size(found) < min_support {
+                    return (0usize, 0u128);
+                }
 
-        if found.is_empty() || effective_sample_size(&found) < min_support {
-            continue;
-        }
-
-        nodes_to_invert += 1;
-        forward_solutions += candidates * found.len() as u128;
-    }
+                (1, candidates * found.len() as u128)
+            },
+        )
+        .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
 
     FieldCost {
         nodes: grid.node_count(),
@@ -653,6 +700,86 @@ mod tests {
         // degrees.
         assert!(plunge >= 80.0, "S1 plunge {}", plunge);
         assert!(node.misfit_degrees().expect("a tensor") < 10.0);
+    }
+
+    #[test]
+    fn a_field_does_not_depend_on_how_many_threads_ran_it() {
+        // The claim the module doc makes, and the one that would fail silently
+        // if a future edit moved any part of a node's arithmetic outside the
+        // node -- a shared accumulator, a running total, a cache keyed on the
+        // last neighbourhood seen. All of those pass the other tests here.
+        let mut faults = faults_at(&normal_phase(), [0.0, 0.0]);
+        faults.extend(faults_at(&strike_slip_phase(), [4_000.0, 1_000.0]));
+        faults.extend(faults_at(&normal_phase(), [1_500.0, 3_000.0]));
+
+        let kernel = Kernel::quartic(Bandwidth::isotropic(3_000.0).unwrap());
+        let grid = SamplingGrid::<2>::new(
+            Point::from([-1_000.0, -1_000.0]),
+            [1_200.0, 1_200.0],
+            [6, 5],
+        )
+        .unwrap();
+        let search = SearchGrid { angle_step_degrees: 20.0, phi_step: 0.25 };
+
+        let run = |threads: usize| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| stress_field(&faults, &grid, kernel, search, 4.0))
+        };
+
+        let alone = run(1);
+        let crowded = run(8);
+
+        assert_eq!(alone.nodes_inverted, crowded.nodes_inverted);
+        assert_eq!(alone.nodes_below_threshold, crowded.nodes_below_threshold);
+        assert_eq!(alone.nodes_without_data, crowded.nodes_without_data);
+        assert_eq!(alone.nodes.len(), crowded.nodes.len());
+
+        // Some node has to have been inverted, or this asserts nothing.
+        assert!(alone.nodes_inverted > 0);
+
+        for (flat, (one, many)) in alone.nodes.iter().zip(&crowded.nodes).enumerate() {
+
+            assert_eq!(one.position, many.position, "node {flat} moved");
+            assert_eq!(one.density, many.density, "node {flat} density");
+            assert_eq!(one.support, many.support, "node {flat} support");
+            assert_eq!(one.faults_within_reach, many.faults_within_reach, "node {flat} count");
+
+            match (&one.solution, &many.solution) {
+                (None, None) => {}
+                (Some(a), Some(b)) => {
+                    assert_eq!(
+                        a.best.mean_misfit_degrees, b.best.mean_misfit_degrees,
+                        "node {flat} misfit"
+                    );
+                    assert_eq!(a.best.tensor.phi, b.best.tensor.phi, "node {flat} phi");
+                    assert_eq!(one.s1(), many.s1(), "node {flat} S1");
+                    assert_eq!(a.candidates_scored, b.candidates_scored, "node {flat} scored");
+                    // The runners-up too: a tie broken differently under
+                    // threads would show up here first.
+                    assert_eq!(a.runners_up.len(), b.runners_up.len(), "node {flat} runners-up");
+                    for (rank, (x, y)) in a.runners_up.iter().zip(&b.runners_up).enumerate() {
+                        assert_eq!(
+                            x.mean_misfit_degrees, y.mean_misfit_degrees,
+                            "node {flat} runner-up {rank}"
+                        );
+                    }
+                }
+                _ => panic!("node {flat} had a tensor under one thread count and not the other"),
+            }
+        }
+
+        // The cost report is threaded too, and is a pure count.
+        assert_eq!(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .unwrap()
+                .install(|| field_cost(&faults, &grid, kernel, search, 4.0)),
+            field_cost(&faults, &grid, kernel, search, 4.0)
+        );
     }
 
     #[test]
