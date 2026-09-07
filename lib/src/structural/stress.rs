@@ -63,6 +63,30 @@ pub enum StressError {
     InvalidMagnitudes { sigma1: f64, sigma3: f64 },
 }
 
+/// What scoring one candidate tensor against a set of faults produced.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MisfitSummary {
+    /// Mean angular misfit in degrees, weighted where weights were given.
+    pub mean_degrees: f64,
+    /// How many faults contributed to it at all. Faults the forward model can
+    /// say nothing about, and faults weighted at zero, are not among them.
+    pub faults_scored: usize,
+    /// Kish's effective sample size over the faults that contributed:
+    /// `(sum w)^2 / sum w^2`.
+    ///
+    /// The weighted counterpart of `faults_scored`, and the one a comparison
+    /// between candidates has to use once weights are in play. A count says
+    /// twenty faults contributed whether they contributed equally or whether
+    /// nineteen of them were weighted at a millionth of the twentieth; this
+    /// says twenty in the first case and barely more than one in the second.
+    ///
+    /// What it measures is the shape of the weights, not their scale, so any
+    /// constant weight returns the count. Unweighted, or with every weight
+    /// exactly one, it returns it to the last bit, because the sums are then
+    /// integer-valued; with any other constant it lands within rounding of it.
+    pub effective_sample_size: f64,
+}
+
 /// A reduced stress tensor (Angelier, 1984): the orientations of the S1 and
 /// S3 principal stress axes, plus the shape ratio
 /// `Phi = (sigma2 - sigma3) / (sigma1 - sigma3)`, which between them are what
@@ -206,19 +230,78 @@ impl ReducedStressTensor {
     /// two candidate tensors needs to know it, since a tensor that silences
     /// half the dataset should not win on the strength of the remainder.
     /// `None` when no fault could be scored at all.
+    ///
+    /// The unweighted case of [`misfit_summary`](Self::misfit_summary).
     pub fn mean_misfit(&self, faults: &[FaultPlane]) -> Option<(f64, usize)> {
 
-        let mut total = 0.0;
-        let mut counted = 0usize;
+        self.misfit_summary(faults, None)
+            .map(|summary| (summary.mean_degrees, summary.faults_scored))
+    }
 
-        for fault in faults {
-            if let Some(misfit) = self.misfit_on(fault) {
-                total += misfit;
-                counted += 1;
+    /// Score this tensor against a set of faults, each carrying as much of the
+    /// answer as its weight says.
+    ///
+    /// `weights` is `None` for the plain mean, or one non-negative number per
+    /// fault, in the same order. What the weights mean is the caller's
+    /// business: for a stress field estimated on a grid they are a kernel of
+    /// the distance from the node to the observation, so the same dataset is
+    /// scored again at every node with the weights changed and the faults not.
+    /// They need not sum to anything in particular.
+    ///
+    /// Faults weighted at zero are skipped before the forward model runs, not
+    /// after: with a compact kernel most of a dataset is weightless at any one
+    /// node, and a solution computed only to be multiplied by zero is the bulk
+    /// of the work.
+    ///
+    /// `None` when nothing could be scored -- an empty set, faults without
+    /// slickenlines, every weight zero -- and also when `weights` is the wrong
+    /// length or holds a negative or NaN value. Refusing is deliberate there:
+    /// zipping two slices of different lengths would silently pair weights
+    /// with the wrong faults and return a number that looks like an answer.
+    pub fn misfit_summary(
+        &self,
+        faults: &[FaultPlane],
+        weights: Option<&[f64]>,
+    ) -> Option<MisfitSummary> {
+
+        if let Some(weights) = weights {
+            if weights.len() != faults.len() {
+                return None;
+            }
+            // NaN named rather than caught by a negated comparison: it has to
+            // be rejected as surely as a negative, and saying so is clearer
+            // than relying on it failing every test it is put to.
+            if weights.iter().any(|weight| weight.is_nan() || *weight < 0.0) {
+                return None;
             }
         }
 
-        (counted > 0).then(|| (total / counted as f64, counted))
+        let mut weighted_total = 0.0;
+        let mut weight_sum = 0.0;
+        let mut weight_square_sum = 0.0;
+        let mut faults_scored = 0usize;
+
+        for (ndx, fault) in faults.iter().enumerate() {
+
+            let weight = weights.map_or(1.0, |weights| weights[ndx]);
+
+            if weight == 0.0 {
+                continue;
+            }
+
+            if let Some(misfit) = self.misfit_on(fault) {
+                weighted_total += weight * misfit;
+                weight_sum += weight;
+                weight_square_sum += weight * weight;
+                faults_scored += 1;
+            }
+        }
+
+        (weight_sum > 0.0).then(|| MisfitSummary {
+            mean_degrees: weighted_total / weight_sum,
+            faults_scored,
+            effective_sample_size: weight_sum * weight_sum / weight_square_sum,
+        })
     }
 
     /// Apply this tensor to a fault plane, predicting the slip it drives.
