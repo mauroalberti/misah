@@ -489,6 +489,63 @@ terms that can be named. That full volume was checked too, off to one side —
 Note what the reference is: the *corrected* `InterpDensity3D`, at 0.9 or later.
 The older one is wrong in ways an agreement would have propagated.
 
+## Focal mechanisms, and the Kagan angle
+
+`algebra::quaternion` and `structural::focal_mechanism` carry a double-couple
+focal mechanism as its **P, T and B** kinematic axes, and
+`structural::rotation` gives the rotation between two of them after Kagan
+(1991).
+
+Nodal planes are the usual way a mechanism is quoted and deliberately not what
+this takes: nothing in the seismology says which of the two planes slipped, so
+a pair of planes is an ambiguous input where P and T are not.
+`PTBAxes::from_fault_slickenline` converts from a fault plane and its slip,
+which is the unambiguous form of the same thing — and requires the sense of
+movement to be known, because reversing an undetermined slip exchanges P with
+T and returns shortening where the rock recorded extension.
+
+**P and T are not stress axes.** They are kinematic, pinned at 45 degrees to
+the fault plane by construction, and coincide with the principal stresses only
+under Anderson's assumption. Where this crate means stress it says stress, and
+`structural::inversion` is what solves for it.
+
+### Four answers, not one
+
+A double couple is unchanged by a half turn about any of its own axes, so the
+question "what rotation carries mechanism 1 onto mechanism 2" has four equally
+correct answers. `focal_mechanism_rotations` returns all four, sorted by the
+size of the turn; the smallest is the **Kagan angle**, the standard measure of
+how far apart two mechanisms are. The other three are kept because a minimum
+quoted without its alternatives is a number nobody can check.
+
+No two double couples are more than 120 degrees apart — 120 and not the 180 a
+general pair of frames would allow — and that bound is the cheapest check there
+is on an implementation of this. A wrong set of symmetry generators fails it at
+once. The tests sweep 2000 random pairs against it, and against Kagan's own
+published table of four solutions.
+
+### What the Fortran had wrong here
+
+The reference is `GeoFaults/` in this repository's own history — Alberti
+(2010)'s `FaultCorrelation.f95` and the modules under it, removed in `961d8b9`
+and recoverable with `git show 961d8b9^:GeoFaults/…`. There is no separate
+repository, and no submodule.
+
+`quaternfromcartmatr` there takes four square roots whose arguments are
+non-negative in exact arithmetic and not in floating point. At a **trace of
+-1** — a rotation by 180 degrees, which is what two strike-slip mechanisms a
+whole number of degrees apart give — one argument that should be exactly zero
+lands a few times 10⁻¹⁶ below it, and the Fortran returns NaN in silence. It
+went unseen for twenty years because it needs the trace to be *exactly* -1:
+round-degree catalogue data and textbook examples produce that constantly, and
+random doubles essentially never. `Quaternion::from_rotation_matrix` clamps,
+which is safe because the branch taken always divides by a component at or
+above the mean of the four, so a clamped zero never reaches a denominator.
+
+Everything else in that Fortran's Kagan path was verified rather than assumed:
+`triadvectors_rotsolution` gives bit-identical output compiled with and without
+`-fimplicit-none`, which is not true of its sibling `ForwardStress.f95`.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
@@ -653,6 +710,31 @@ shared. `RAYON_NUM_THREADS` bounds the pool where taking the machine is not
 acceptable — a QGIS plugin, say. Measured on a four-core laptop, one field took
 7.54 s at one thread, 3.73 s at two and 1.51 s unbounded.
 
+```python
+from misah.kernels import (ptb_axes, kagan_angles, kagan_angle_matrix,
+                           focal_mechanism_rotations)
+
+# P, T and B axes from faults and their slip. Same (N, 4) array
+# invert_stress takes -- but the sense of movement must be known here, or
+# P and T swap and shortening is reported as extension.
+axes = ptb_axes(faults)          # -> p, t, b, each (N, 2) trend and plunge
+
+# A mechanism crosses as four numbers: P trend, P plunge, T trend, T plunge.
+kagan_angles(first, second)      # (N,) elementwise, 0 to 120 degrees
+kagan_angle_matrix(catalogue)    # (N, N), symmetric, zero diagonal
+
+# All four rotations for one pair, smallest turn first.
+focal_mechanism_rotations(232.0, 41.0, 120.0, 24.0,
+                          51.0, 17.0, 295.0, 55.0)
+# -> trend, plunge, angle_degrees, each (4,)
+```
+
+The matrix is why any of this is in Rust: comparing a catalogue with itself is
+`N²/2` rotations, trivial once and ruinous in a Python loop at N in the
+thousands. It runs across every core with the interpreter released — 600
+mechanisms, 180 000 pairs, 32 ms. Symmetric with a zero diagonal, so it goes
+straight into a clustering routine, which is the usual reason to want one.
+
 Worked examples are in [`docs/notebooks`](docs/notebooks): kernel density in
 `01_kernel_density.ipynb`, the stress field in `02_stress_field.ipynb`. Both
 generate their own data through the forward model, so the answer the inversion
@@ -689,9 +771,9 @@ is the same problem as the wheels, and belongs there — building for the
 platforms QGIS runs on — rather than in a second implementation of everything
 kept in reserve.
 
-All six Python suites run in CI. `test_stress.py`, `test_mesh.py`,
-`test_inversion.py`, `test_best_fit.py` and `test_fields.py` are numbers in,
-numbers out;
+All seven Python suites run in CI. `test_stress.py`, `test_mesh.py`,
+`test_inversion.py`, `test_best_fit.py`, `test_fields.py` and
+`test_mechanisms.py` are numbers in, numbers out;
 `test_inversion.py` needs no fixture at all, generating its faults through
 `solve_stress` from a tensor chosen in advance and asking the inversion to find
 that tensor again — the two halves of the Python surface checked against each
@@ -722,18 +804,19 @@ the only raster format handled, anything wider meaning GDAL. It returns the
 nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
 since at sea that is a depth and not a hole.
 
-`structural::focal_mechanism` is still an empty struct, and
 `gp_projected_focal_mechanisms` is read from a GeoProfiler export into records
-that nothing yet computes with — the next thing in this direction, and the one
-`structural::stress` would extend to, focal mechanisms being fault-slip data
-that arrives already reduced to a plane and a rake.
+that nothing yet computes with. `structural::focal_mechanism` now carries the
+P/T/B triad those records would feed, so the join is a matter of wiring rather
+than of arithmetic.
 
-The Python surface is fifteen functions: `intersect_plane_grid`,
+The Python surface is twenty functions: `intersect_plane_grid`,
 `intersect_mesh_grid`, `best_fit_planes` and `plane_normal` for the raster
 side; `solve_stress`, `rake_to_slickenline`, `stress_tensor`, `score_stress`,
-`invert_stress` and `inversion_candidate_count` for the structural side; and
+`invert_stress` and `inversion_candidate_count` for the structural side;
 `covering_grid`, `kernel_profile`, `density_field`, `stress_field` and
-`field_cost` for the fields. Each builds and consumes the types it needs within
+`field_cost` for the fields; and `ptb_axes`, `kagan_angles`,
+`kagan_angle_matrix`, `focal_mechanism_rotations` and
+`rotate_focal_mechanism` for focal mechanisms. Each builds and consumes the types it needs within
 the one call rather than handing them across the boundary, so the surface stays
 plain arrays and numbers in, arrays and dicts out.
 

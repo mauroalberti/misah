@@ -5,7 +5,7 @@ for structural geology processings: cutting geological surfaces against a DEM,
 reading attitudes back out of the result, and solving the Wallace-Bott problem
 forwards and backwards.
 
-**Alpha.** Fifteen functions are exposed and the API may still change without
+**Alpha.** Twenty functions are exposed and the API may still change without
 notice.
 
 ## Install
@@ -244,6 +244,44 @@ is not.
 
 Worked examples, with their output, are in
 [`docs/notebooks`](https://gitlab.com/mauroalberti/misah/-/tree/master/docs/notebooks).
+
+### Focal mechanisms, and the Kagan angle
+
+```python
+from misah.kernels import (ptb_axes, kagan_angles, kagan_angle_matrix,
+                           focal_mechanism_rotations, rotate_focal_mechanism)
+
+# P, T and B from faults and their slip -- the same (N, 4) array
+# invert_stress takes. The sense of movement must be known here: reversing an
+# undetermined slip exchanges P with T, and the fault comes back as shortening
+# where the rock recorded extension.
+axes = ptb_axes(faults)          # -> p, t, b, each (N, 2) trend and plunge
+
+# A mechanism crosses the boundary as four numbers: P trend, P plunge,
+# T trend, T plunge. Nodal planes are deliberately not taken -- which of the
+# two slipped is not something the seismology says.
+kagan_angles(first, second)      # (N,) elementwise, 0 to 120 degrees
+kagan_angle_matrix(catalogue)    # (N, N), symmetric, zero diagonal
+
+focal_mechanism_rotations(232.0, 41.0, 120.0, 24.0,
+                          51.0, 17.0, 295.0, 55.0)
+# -> trend, plunge, angle_degrees, each (4,), smallest turn first
+```
+
+There are **four** rotations and not one, because a double couple is unchanged
+by a half turn about any of its own axes. The smallest is the Kagan angle, the
+standard measure of how far apart two mechanisms are; the other three are
+returned rather than dropped, a minimum quoted without its alternatives being a
+number nobody can check. No pair can exceed 120 degrees.
+
+P and T are **kinematic** axes, at 45 degrees to the fault plane by
+construction. They are not principal stress axes, and coincide with them only
+under Anderson's assumption; `invert_stress` is what solves for stress.
+
+`kagan_angle_matrix` is why this is in Rust. A catalogue against itself is
+`N²/2` rotations -- 600 mechanisms is 180 000 pairs in 32 ms here, across every
+core with the interpreter released. Symmetric with a zero diagonal, so it goes
+straight into a clustering routine.
 
 ## There is no pure-Python fallback
 
