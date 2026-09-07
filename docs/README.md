@@ -13,20 +13,28 @@ misleads you when you choose badly.
   inversion over two tectonic phases returns a confident wrong answer, sizing a
   run before starting it, and the two columns that say whether a node's tensor
   is worth reading.
+- **`03_focal_mechanisms.ipynb`** — the Kagan angle. Why P and T rather than
+  nodal planes, why the rotation between two mechanisms has four answers and
+  not one, the 120-degree bound, and turning a catalogue into a distance matrix
+  to cluster it. Checked against Kagan (1991)'s own published table.
 
-Neither reads a file. Both generate their own data, and both build it through
-the forward model, so the answer the inversion should return is known
-independently of the search rather than copied from somewhere.
+None of them reads a file. Each generates its own data, and each has something
+independent to be right against: the first two build their faults through the
+forward model, so what the inversion should return is known without trusting
+the inversion, and the third checks itself against four numbers printed in a
+1991 paper.
 
 ## Running them
 
 ```sh
 pip install --pre misah        # or build the wheel: see the main README
-pip install jupyter matplotlib
+pip install jupyter matplotlib scipy
 jupyter lab docs/notebooks/
 ```
 
-`matplotlib` is a notebook dependency, not a `misah` one.
+`matplotlib` and `scipy` are notebook dependencies, not `misah` ones. Only
+`03_focal_mechanisms.ipynb` needs scipy, and only for the clustering at the
+end.
 
 ## Outputs are committed
 
@@ -41,18 +49,21 @@ jupyter nbconvert --to notebook --execute --inplace docs/notebooks/*.ipynb
 ```
 
 The second one takes about a minute; most of it is one `stress_field` call,
-which is the honest cost of the thing being demonstrated.
+which is the honest cost of the thing being demonstrated. The other two are
+seconds.
 
 ## What they are not
 
 They are not tests, and CI does not run them. The suites under `pylib/tests/`
-are what assert the bindings behave — `test_fields.py` covers everything these
-notebooks use, and does it in a form that fails loudly. A notebook that runs is
-not evidence that its numbers are right, only that nothing raised.
+are what assert the bindings behave — `test_fields.py` and
+`test_mechanisms.py` between them cover everything these notebooks call, and do
+it in a form that fails loudly. A notebook that runs is not evidence that its
+numbers are right, only that nothing raised.
 
 The prose here does make checkable claims, though, and they were checked
 against what the cells actually printed rather than written from expectation.
 Where the first draft and the output disagreed, the output won: the margin
-discussion in the first notebook and the domain-boundary dataset in the second
-are both there because the original text claimed something the figures did not
-show.
+discussion in the first notebook, the domain-boundary dataset in the second,
+and the note in the third about why one population appears as two blobs on a
+stereonet are all there because the original text claimed something the figures
+did not show.

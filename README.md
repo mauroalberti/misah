@@ -736,10 +736,11 @@ mechanisms, 180 000 pairs, 32 ms. Symmetric with a zero diagonal, so it goes
 straight into a clustering routine, which is the usual reason to want one.
 
 Worked examples are in [`docs/notebooks`](docs/notebooks): kernel density in
-`01_kernel_density.ipynb`, the stress field in `02_stress_field.ipynb`. Both
-generate their own data through the forward model, so the answer the inversion
-should return is known without trusting the inversion, and both carry their
-output so they read without being run.
+`01_kernel_density.ipynb`, the stress field in `02_stress_field.ipynb`, focal
+mechanisms and the Kagan angle in `03_focal_mechanisms.ipynb`. Each generates
+its own data — through the forward model, or against Kagan's published table —
+so the answer is known without trusting the code, and each carries its output so
+it reads without being run.
 
 The extension is built as `misah._misah`, so its submodules register themselves
 under that name; `misah/__init__.py` aliases them, which is what makes
