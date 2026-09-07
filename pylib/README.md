@@ -5,7 +5,7 @@ for structural geology processings: cutting geological surfaces against a DEM,
 reading attitudes back out of the result, and solving the Wallace-Bott problem
 forwards and backwards.
 
-**Alpha.** Ten functions are exposed and the API may still change without
+**Alpha.** Fifteen functions are exposed and the API may still change without
 notice.
 
 ## Install
@@ -192,6 +192,58 @@ score["misfits"]            # (N,) in the order given; NaN where none predicted
 matrix = stress_tensor(*best["s1"], *best["s3"], best["phi"],
                        sigma1=30.0, sigma3=10.0)
 ```
+
+### Density, and a tensor at every node
+
+```python
+from misah.kernels import covering_grid, density_field, field_cost, stress_field
+
+# A grid around the data. `origin` is the first sample point, never a cell
+# corner, and `margin` wants to be about the kernel's reach.
+grid = covering_grid(hypocentres, spacing=[500.0] * 3, margin=1500.0)
+
+# Observations per unit volume at every node: flat, first axis fastest.
+values = density_field(hypocentres, grid["origin"], grid["spacing"],
+                       grid["counts"], bandwidth=[1500.0] * 3)
+volume = values.reshape(grid["counts"], order="F")
+
+# Summed over the grid, times the cell volume, this is the number of
+# observations back. One line, and worth running.
+values.sum() * float(np.prod(grid["spacing"]))
+```
+
+The array's width says how many coordinates locate an observation: 1, 2 or 3.
+Bandwidth is in map units and one per axis, because depth is not
+interchangeable with easting even when both are in metres.
+
+```python
+# What the field will cost -- measured, in milliseconds, before committing.
+field_cost(positions, faults, origin, spacing, counts, [4000.0] * 2,
+           min_support=10.0)
+# -> nodes, nodes_to_invert, forward_solutions
+
+field, stats = stress_field(positions, faults, origin, spacing, counts,
+                            bandwidth=[4000.0] * 2, min_support=10.0)
+
+field["density"]                  # faults per unit area, from the same kernel
+field["support"]                  # Kish's (sum w)^2 / sum w^2 -- read this one
+field["s1"]                       # (M, 2) trend and plunge; NaN where no tensor
+field["runner_up_s1_degrees"]     # how far away the nearest rival answer sits
+stats["nodes_below_threshold"]    # holes, left as holes
+```
+
+`positions` says where each fault was found, `faults` says what it is. Every
+column is one entry per node in the grid's flat order, so they align with each
+other and with `density_field` on the same grid.
+
+Both release the interpreter and run across every core, and the answer does not
+depend on how many cores that was — bit for bit, the split being over nodes with
+each node's arithmetic sequential inside it. `RAYON_NUM_THREADS` bounds the pool
+where taking the whole machine is not acceptable, which inside QGIS it usually
+is not.
+
+Worked examples, with their output, are in
+[`docs/notebooks`](https://gitlab.com/mauroalberti/misah/-/tree/master/docs/notebooks).
 
 ## There is no pure-Python fallback
 

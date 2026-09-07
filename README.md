@@ -447,6 +447,26 @@ a millisecond and reports the work the real pass would do — measured, not
 estimated from a formula, so a dataset clustered in one corner of its own grid
 is costed as such.
 
+Both passes run across rayon's thread pool, and both give **bit for bit** what
+one thread would. That is worth stating because it is the property parallel
+numerics usually lose: a reduction that lets threads combine partial sums adds
+the same terms in an order that depends on how the work was split, so the last
+bits move when the machine changes. Nothing of the kind happens here. The split
+is over nodes; a node's value is a sequential sum over its own neighbourhood in
+an order fixed by the bin layout; threads never share an accumulator; and the
+field's counters are summed from per-node outcomes, integer addition not caring
+what order it happens in.
+
+The split also keeps the cores fed, which is not automatic when nodes cost
+anything from nothing to a full search: on the run above, 3.93 threads' worth of
+CPU was consumed on four threads and 6.92 on eight. Wall-clock went from 21.6 s
+to between five and seven, three to four times rather than seven, and the
+shortfall is the machine and not the schedule — a 15 W mobile part holding its
+all-core clock far below its single-core turbo, two hardware threads to a
+physical core. Where the clock holds, the wall time follows the occupancy.
+`rayon::ThreadPoolBuilder::install` bounds the pool where taking the machine is
+not acceptable.
+
 ### Against the reference
 
 `lib/tests/density_reference.rs` runs the estimator against `InterpDensity3D`
@@ -587,6 +607,58 @@ matrix = stress_tensor(*best["s1"], *best["s3"], best["phi"],
                        sigma1=30.0, sigma3=10.0)
 ```
 
+```python
+from misah.kernels import covering_grid, density_field, field_cost, stress_field
+
+# A grid around the data. `origin` is the first sample point, not a cell
+# corner, and `margin` should be about the kernel's reach.
+grid = covering_grid(hypocentres, spacing=[500.0] * 3, margin=1500.0)
+
+# Observations per unit volume at every node, flat, first axis fastest.
+values = density_field(hypocentres, grid["origin"], grid["spacing"],
+                       grid["counts"], bandwidth=[1500.0] * 3)
+volume = values.reshape(grid["counts"], order="F")
+
+# Summed over the grid and multiplied by the cell volume, that comes back as
+# the number of observations. It is one line and it is worth running.
+values.sum() * float(np.prod(grid["spacing"]))
+```
+
+```python
+# What the field will cost, in milliseconds, before committing to it.
+field_cost(positions, faults, origin, spacing, counts, [4000.0] * 2,
+           min_support=10.0)
+# -> nodes, nodes_to_invert, forward_solutions
+
+field, stats = stress_field(positions, faults, origin, spacing, counts,
+                            bandwidth=[4000.0] * 2, min_support=10.0)
+
+field["density"]                  # faults per unit area, same kernel
+field["support"]                  # Kish's (sum w)^2 / sum w^2 -- read this one
+field["s1"]                       # (M, 2) trend and plunge, NaN where no tensor
+field["runner_up_s1_degrees"]     # how far the nearest rival answer sits
+stats["nodes_below_threshold"]    # holes left as holes
+```
+
+`positions` is an (M, D) array with D of 1, 2 or 3 — the dimension of the
+*field*, not of the geology, read off the width of the array. Everything comes
+back flat in the grid's own order, first axis fastest, so the columns align
+with each other and with `density_field` on the same grid; `reshape(counts,
+order="F")` lays one out.
+
+Both run across every core and release the interpreter while they do. The
+answer does not depend on the thread count, bit for bit: the split is over
+nodes, each node's arithmetic stays sequential inside it, and no accumulator is
+shared. `RAYON_NUM_THREADS` bounds the pool where taking the machine is not
+acceptable — a QGIS plugin, say. Measured on a four-core laptop, one field took
+7.54 s at one thread, 3.73 s at two and 1.51 s unbounded.
+
+Worked examples are in [`docs/notebooks`](docs/notebooks): kernel density in
+`01_kernel_density.ipynb`, the stress field in `02_stress_field.ipynb`. Both
+generate their own data through the forward model, so the answer the inversion
+should return is known without trusting the inversion, and both carry their
+output so they read without being run.
+
 The extension is built as `misah._misah`, so its submodules register themselves
 under that name; `misah/__init__.py` aliases them, which is what makes
 `import misah.kernels` work rather than only `misah._misah.kernels`.
@@ -617,8 +689,9 @@ is the same problem as the wheels, and belongs there — building for the
 platforms QGIS runs on — rather than in a second implementation of everything
 kept in reserve.
 
-All five Python suites run in CI. `test_stress.py`, `test_mesh.py`,
-`test_inversion.py` and `test_best_fit.py` are numbers in, numbers out;
+All six Python suites run in CI. `test_stress.py`, `test_mesh.py`,
+`test_inversion.py`, `test_best_fit.py` and `test_fields.py` are numbers in,
+numbers out;
 `test_inversion.py` needs no fixture at all, generating its faults through
 `solve_stress` from a tensor chosen in advance and asking the inversion to find
 that tensor again — the two halves of the Python surface checked against each
@@ -655,14 +728,25 @@ that nothing yet computes with — the next thing in this direction, and the one
 `structural::stress` would extend to, focal mechanisms being fault-slip data
 that arrives already reduced to a plane and a rake.
 
-The Python surface is ten functions: `intersect_plane_grid`,
+The Python surface is fifteen functions: `intersect_plane_grid`,
 `intersect_mesh_grid`, `best_fit_planes` and `plane_normal` for the raster
-side, `solve_stress`,
-`rake_to_slickenline`, `stress_tensor`, `score_stress`, `invert_stress` and
-`inversion_candidate_count` for the structural side. Each builds and consumes
-the types it needs within the one call rather than handing them across the
-boundary, so the surface stays plain arrays and numbers in, arrays and dicts
-out.
+side; `solve_stress`, `rake_to_slickenline`, `stress_tensor`, `score_stress`,
+`invert_stress` and `inversion_candidate_count` for the structural side; and
+`covering_grid`, `kernel_profile`, `density_field`, `stress_field` and
+`field_cost` for the fields. Each builds and consumes the types it needs within
+the one call rather than handing them across the boundary, so the surface stays
+plain arrays and numbers in, arrays and dicts out.
+
+The field five are where that costs something worth naming. `N`, the dimension
+an observation is located in, is a const generic on the Rust side — one compiled
+copy per dimension, chosen when the code is written — and on the Python side it
+is the width of an array, at run time. The bridge is a match over 1, 2 and 3,
+and it is why a field here is one, two or three dimensional rather than any
+number: each is a monomorphisation somebody has to name. One dimension is not
+padding for a tidy range, either. A histogram of hypocentral depths is a
+one-dimensional density, and estimating it with a kernel rather than with bins
+removes both of a histogram's troubles at once — edges chosen by hand, and an
+answer that changes when they move.
 
 What remains Rust-only is the GeoProfiler SQLite reader, and deliberately:
 Python has `sqlite3` in its standard library and can read a GeoProfiler export
@@ -810,14 +894,20 @@ programme, which this project's GPL-3 licence and public namespace should
 qualify it for), or a mirror onto a service that gives macOS runners to public
 repositories.
 
-`docs/notebooks/misah.ipynb` is gone rather than repaired. Every path in it was
-dead, not merely the one previously named here: `misah.geometry.geom2d`,
+`docs/notebooks/misah.ipynb` was removed rather than repaired. Every path in it
+was dead, not merely the one previously named here: `misah.geometry.geom2d`,
 `misah.geometry.geom3d`, `misah.orientations.orien3d`,
 `misah.georeferenced.georef2d` — the last of which was a file deleted two
-commits before this line was written — and it compared results against `pygsf`,
-which geogst itself superseded. Nothing in it touched any of the ten functions
-the package exposes today. A notebook covering those would be worth having, and
-would be a new one.
+commits before that line was written — and it compared results against `pygsf`,
+which geogst itself superseded. Nothing in it touched any function the package
+exposes.
+
+`01_kernel_density.ipynb` and `02_stress_field.ipynb` are the new ones that
+line asked for. They are not a repair of the old one and share nothing with it:
+they call the functions that exist, they read no files, and they build their
+data through the forward model so that what the inversion should return is
+known without trusting the inversion. `docs/README.md` says how they are kept
+from going the way of the first.
 
 `lib/examples/test.rs` is gone with it: a nalgebra hello-world computing the
 distance between two points, referring to nothing in this crate, and the sole
