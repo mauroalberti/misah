@@ -133,6 +133,7 @@ from misah.kernels import invert_stress, inversion_candidate_count
 result = invert_stress(
     faults,
     senses=None,             # (N,) bool: False where the sense was not read
+    weights=None,            # (N,) float >= 0: how much each fault counts for
     angle_step_degrees=10.0,
     phi_step=0.1,
 )
@@ -141,6 +142,7 @@ result["best"]["s1"]                   # (trend, plunge)
 result["best"]["phi"]
 result["best"]["mean_misfit_degrees"]
 result["best"]["faults_scored"]        # how many faults that mean came from
+result["best"]["effective_sample_size"]  # the count, once weighting is allowed for
 result["runners_up"]                   # the next five, worst last
 ```
 
@@ -150,13 +152,34 @@ a dataset where the sense went unrecorded: those faults would be scored at 180
 degrees for fitting perfectly the other way round. Pass `False` for them and the
 misfit is taken modulo 180.
 
+`weights` is what makes a stress *field* possible. Each fault counts for as much
+as its weight says, so pass the whole dataset once and recompute only the weights
+at each node of a grid, from a kernel of the distance between that node and where
+each fault was measured. Faults weighted at zero are dropped before any forward
+solution is computed, so with a kernel of finite reach a node costs what its own
+neighbourhood costs rather than what the dataset costs. Only the relative sizes
+are read; they need not sum to anything.
+
+It is also the only handle for separating two superposed tectonic phases, which
+nothing else in this search can be told to prefer between.
+
+Weighting changes which number says whether two misfits are comparable.
+`faults_scored` counts twenty faults whether they contributed equally or whether
+nineteen were weighted at a millionth of the twentieth; `effective_sample_size`
+is Kish's `(sum w)^2 / sum w^2`, which says twenty in the first case and barely
+one in the second. Unweighted the two are equal, exactly. At the edge of a field
+most nodes are the second kind, so read the effective size there.
+
 The search is exhaustive rather than a descent, because a fault set carrying two
 superposed tectonic phases has two minima by construction and a descent would
 report whichever it fell into. `inversion_candidate_count` sizes a run before
 starting it — the default grid is 71 280 candidates, and halving both steps
 multiplies the work by about fourteen. The GIL is released for the search, so a
 hundred faults on the default grid holds it for none of the 1.5 s they take.
-`None` comes back when no candidate could be scored on any fault.
+`None` comes back when no candidate could be scored on any fault, and also when
+every weight is zero — for a field, a node with no data within reach, which is a
+result rather than a failure. A `weights` of the wrong length, or holding a
+negative or a NaN, raises instead: that is a fault in the call, not in the data.
 
 ```python
 from misah.kernels import score_stress, stress_tensor

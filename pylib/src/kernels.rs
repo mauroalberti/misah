@@ -15,7 +15,7 @@ use misah::structural::best_fit::best_fit_geoplanes;
 use misah::structural::fault::FaultPlane;
 use misah::structural::geol_axis::GeologicalAxis;
 use misah::structural::geol_plane::GeologicalPlane;
-use misah::structural::inversion::{invert, ScoredTensor, SearchGrid};
+use misah::structural::inversion::{invert, invert_weighted, ScoredTensor, SearchGrid};
 use misah::structural::slickenline::{SlipSense, Slickenline};
 use misah::structural::stress::ReducedStressTensor;
 
@@ -378,6 +378,47 @@ fn checked_grid(angle_step_degrees: f64, phi_step: f64) -> PyResult<SearchGrid> 
     Ok(SearchGrid { angle_step_degrees, phi_step })
 }
 
+/// The per-fault weights, once they are known to pair with the faults.
+///
+/// The core answers a mismatched length or a negative weight with `None`,
+/// which is right inside Rust and wrong to pass on here: at this boundary it
+/// would arrive as "no solution", and read as something the data did rather
+/// than something the call got wrong. Refused with a message instead, naming
+/// the offending entry.
+///
+/// Copied out of the array as well as checked, so that the search can run with
+/// the interpreter released rather than holding a borrow of a Python object
+/// across it.
+fn checked_weights(
+    weights: Option<&PyReadonlyArray1<'_, f64>>,
+    fault_count: usize,
+) -> PyResult<Option<Vec<f64>>> {
+
+    let Some(weights) = weights else {
+        return Ok(None);
+    };
+
+    let view = weights.as_array();
+
+    if view.len() != fault_count {
+        return Err(PyValueError::new_err(format!(
+            "weights has {} entries but {} faults were given",
+            view.len(),
+            fault_count
+        )));
+    }
+
+    for (index, weight) in view.iter().enumerate() {
+        if weight.is_nan() || *weight < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "weight {index} is {weight}: weights must be non-negative numbers"
+            )));
+        }
+    }
+
+    Ok(Some(view.to_vec()))
+}
+
 /// One scored candidate, as a dict.
 fn scored_tensor_dict<'py>(
     py: Python<'py>,
@@ -396,6 +437,7 @@ fn scored_tensor_dict<'py>(
     dict.set_item("phi", scored.tensor.phi)?;
     dict.set_item("mean_misfit_degrees", scored.mean_misfit_degrees)?;
     dict.set_item("faults_scored", scored.faults_scored)?;
+    dict.set_item("effective_sample_size", scored.effective_sample_size)?;
 
     Ok(dict)
 }
@@ -695,36 +737,68 @@ fn score_stress<'py>(
 /// data as given; pass `False` for the faults whose sense nobody could tell,
 /// or those faults will be scored at 180 degrees for being right.
 ///
+/// `weights` is an optional (N,) array of non-negative numbers saying how much
+/// each fault counts for. Omitting it weights them all alike. The caller this
+/// exists for is a stress field on a grid: pass the whole dataset once and
+/// recompute only the weights at each node, from a kernel of the distance
+/// between the node and where each fault was measured. Faults weighted at zero
+/// are dropped before any forward solution is computed, so with a kernel of
+/// finite reach a node costs what its own neighbourhood costs rather than what
+/// the dataset costs. What the weights mean is not this function's business:
+/// they need not sum to anything, and only their relative size is read.
+///
+/// Weighting is also how two superposed tectonic phases are separated, since
+/// nothing else in this search can be told to prefer one over the other.
+///
 /// The search is exhaustive over the grid rather than a descent, because the
 /// misfit surface is not convex: a fault set carrying two superposed tectonic
 /// phases has two minima by construction, and a descent would report whichever
 /// one it fell into without ever saying the other was there.
 ///
 /// Returns `None` when no candidate could be scored on any fault -- an empty
-/// set. Otherwise a dict with `best`, `runners_up` (the next five by misfit,
-/// worst last, so that a minimum standing alone can be told from one on a
-/// plateau), `candidates_tried` and `candidates_scored`. Each scored tensor is
-/// itself a dict of `s1`, `s2`, `s3` as `(trend, plunge)` pairs, `phi`,
-/// `mean_misfit_degrees`, and the `faults_scored` that mean came from -- a
+/// set, or every weight zero, which for a field on a grid means a node with no
+/// data within reach and is a result rather than a failure. Otherwise a dict
+/// with `best`, `runners_up` (the next five by misfit, worst last, so that a
+/// minimum standing alone can be told from one on a plateau),
+/// `candidates_tried` and `candidates_scored`. Each scored tensor is itself a
+/// dict of `s1`, `s2`, `s3` as `(trend, plunge)` pairs, `phi`,
+/// `mean_misfit_degrees`, the `faults_scored` that mean came from -- a
 /// candidate lying on a principal axis of half the dataset predicts no slip
 /// there and is scored on the rest, so the count is what says whether two
-/// misfits are comparable.
+/// misfits are comparable -- and `effective_sample_size`.
+///
+/// That last is the count in the form that survives weighting: Kish's
+/// `(sum w)^2 / sum w^2` over the faults that contributed. Unweighted it is the
+/// count exactly. Weighted it is the number to read instead, because a count
+/// cannot tell twenty faults contributing equally from nineteen weighted at a
+/// millionth of the twentieth, and at the edge of a field most nodes are the
+/// second kind.
+///
+/// A `weights` of the wrong length, or holding a negative or a NaN, is refused
+/// with a message rather than returning `None`: it is a fault in the call, and
+/// silently pairing weights with the wrong faults would return a number that
+/// looks like an answer.
 #[pyfunction]
-#[pyo3(signature = (faults, senses = None, angle_step_degrees = 10.0, phi_step = 0.1))]
+#[pyo3(signature = (faults, senses = None, weights = None, angle_step_degrees = 10.0, phi_step = 0.1))]
 fn invert_stress<'py>(
     py: Python<'py>,
     faults: PyReadonlyArray2<'py, f64>,
     senses: Option<PyReadonlyArray1<'py, bool>>,
+    weights: Option<PyReadonlyArray1<'py, f64>>,
     angle_step_degrees: f64,
     phi_step: f64,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
 
     let grid = checked_grid(angle_step_degrees, phi_step)?;
     let planes = faults_from_rows(&faults, senses.as_ref())?;
+    let weights = checked_weights(weights.as_ref(), planes.len())?;
 
     // The whole point of the exercise is here, so the interpreter is let go
     // for the duration rather than held through a few million solutions.
-    let Some(result) = py.detach(|| invert(&planes, grid)) else {
+    let Some(result) = py.detach(|| match weights {
+        Some(ref weights) => invert_weighted(&planes, weights, grid),
+        None => invert(&planes, grid),
+    }) else {
         return Ok(None);
     };
 

@@ -381,6 +381,133 @@ def test_scoring_takes_the_sense_flag_too():
     assert np.isclose(claimed["mean_misfit_degrees"], 180.0)
 
 
+def test_unit_weights_invert_exactly_as_no_weights_do():
+    from misah.kernels import invert_stress
+
+    faults = faults_from(NORMAL_TENSOR)
+
+    plain = invert_stress(faults)["best"]
+    weighted = invert_stress(faults, weights=np.ones(len(faults)))["best"]
+
+    assert plain["mean_misfit_degrees"] == weighted["mean_misfit_degrees"]
+    assert plain["faults_scored"] == weighted["faults_scored"]
+    assert plain["s1"] == weighted["s1"]
+    assert plain["phi"] == weighted["phi"]
+
+
+def test_the_effective_sample_size_is_the_count_when_unweighted():
+    from misah.kernels import invert_stress
+
+    best = invert_stress(faults_from(NORMAL_TENSOR))["best"]
+
+    # Exactly, not nearly: the sums behind it are integer-valued when every
+    # weight is one, which is what leaves the unweighted search unchanged.
+    assert best["effective_sample_size"] == float(best["faults_scored"])
+
+
+def test_the_effective_sample_size_collapses_when_one_fault_carries_the_weight():
+    from misah.kernels import invert_stress
+
+    faults = faults_from(NORMAL_TENSOR)
+
+    weights = np.full(len(faults), 1.0e-3)
+    weights[0] = 1.0
+
+    best = invert_stress(faults, weights=weights)["best"]
+
+    # Every fault contributed, so the count is unchanged and says nothing
+    # useful; the effective size is the number that notices.
+    assert best["faults_scored"] == len(faults)
+    assert best["effective_sample_size"] < 1.1
+
+
+def test_a_fault_weighted_at_zero_counts_as_absent():
+    from misah.kernels import invert_stress
+
+    kept = faults_from(NORMAL_TENSOR)
+    mixed = np.vstack([kept, faults_from(STRIKE_SLIP_TENSOR)])
+
+    weights = np.zeros(len(mixed))
+    weights[:len(kept)] = 1.0
+
+    weighted = invert_stress(mixed, weights=weights)["best"]
+    on_the_subset = invert_stress(kept)["best"]
+
+    assert weighted["mean_misfit_degrees"] == on_the_subset["mean_misfit_degrees"]
+    assert weighted["s1"] == on_the_subset["s1"]
+
+
+def test_weighting_towards_one_of_two_superposed_phases_recovers_that_phase():
+    """The case weighting exists for, and the one the plain search cannot do.
+
+    A dataset carrying two tectonic phases has two minima, and the unweighted
+    mean lands between them on a tensor belonging to neither. In a stress field
+    the weights would come from the distance between a grid node and each
+    measurement; set by hand here, which is the same arithmetic with the
+    geography left out.
+    """
+    from misah.kernels import invert_stress
+
+    extension = faults_from(NORMAL_TENSOR)
+    faults = np.vstack([extension, faults_from(STRIKE_SLIP_TENSOR)])
+
+    towards_extension = np.full(len(faults), 1.0e-6)
+    towards_extension[:len(extension)] = 1.0
+
+    towards_transcurrence = np.ones(len(faults))
+    towards_transcurrence[:len(extension)] = 1.0e-6
+
+    found_extension = invert_stress(faults, weights=towards_extension)["best"]
+    found_transcurrence = invert_stress(faults, weights=towards_transcurrence)["best"]
+
+    assert axes_apart(found_extension["s1"], NORMAL_TENSOR[:2]) <= 10.0 + 1e-6
+    assert axes_apart(found_transcurrence["s1"], STRIKE_SLIP_TENSOR[:2]) <= 10.0 + 1e-6
+
+    # And the control: no single tensor explains both phases, so the
+    # unweighted inversion of the same faults fits worse than either.
+    mixed = invert_stress(faults)["best"]
+    assert mixed["mean_misfit_degrees"] > found_extension["mean_misfit_degrees"]
+
+
+def test_a_node_with_no_data_within_reach_has_no_tensor():
+    from misah.kernels import invert_stress
+
+    faults = faults_from(NORMAL_TENSOR)
+
+    # Not an error: out of reach of the kernel there is nothing to invert, and
+    # a field is entitled to a hole.
+    assert invert_stress(faults, weights=np.zeros(len(faults))) is None
+
+
+def test_weights_must_match_the_faults():
+    from misah.kernels import invert_stress
+
+    faults = faults_from(NORMAL_TENSOR)
+
+    # Refused rather than answered with None: pairing weights with the wrong
+    # faults would return a number that looks like a result.
+    try:
+        invert_stress(faults, weights=np.ones(len(faults) - 1))
+    except ValueError:
+        return
+    raise AssertionError("a weights array of the wrong length was accepted")
+
+
+def test_a_weight_that_is_not_a_non_negative_number_is_refused():
+    from misah.kernels import invert_stress
+
+    faults = faults_from(NORMAL_TENSOR)
+
+    for bad in (-1.0, float("nan")):
+        weights = np.ones(len(faults))
+        weights[2] = bad
+        try:
+            invert_stress(faults, weights=weights)
+        except ValueError:
+            continue
+        raise AssertionError(f"a weight of {bad} was accepted")
+
+
 def test_package_exposes_the_inversion_functions():
     import misah
 
