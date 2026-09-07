@@ -54,6 +54,13 @@ impl GeologicalAxis {
         let trend = east.atan2(north).to_degrees();
         let trend = if trend < 0.0 { trend + 360.0 } else { trend };
 
+        // A direction a hair west of north comes back from `atan2` as a tiny
+        // negative, and adding 360 to something below half an ulp of 360 gives
+        // exactly 360.0 -- outside the half-open range this function promises,
+        // and a bearing no compass shows. Folded to zero, which is the same
+        // direction.
+        let trend = if trend >= 360.0 { 0.0 } else { trend };
+
         Self::new(trend, plunge)
     }
 }
@@ -61,6 +68,36 @@ impl GeologicalAxis {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trend_just_west_of_north_is_zero_and_not_three_hundred_and_sixty() {
+        // `atan2` gives a tiny negative here, and adding 360 to something
+        // below half an ulp of 360 lands exactly on it. The range promised is
+        // half-open, and 360 degrees is not a bearing anyone writes down.
+        let just_west = Versor3D::new([-1.0e-17, 1.0, 0.0]).unwrap();
+
+        let axis = GeologicalAxis::from_versor(&just_west);
+
+        assert!(axis.trend < 360.0, "trend {}", axis.trend);
+        assert_eq!(axis.trend, 0.0);
+
+        // And the range holds for a sweep right around, which is the claim the
+        // doc comment actually makes.
+        for step in 0..3600 {
+            let trend = step as f64 / 10.0;
+            for plunge in [-90.0, -37.0, 0.0, 12.5, 90.0] {
+                let back = GeologicalAxis::from_versor(
+                    &GeologicalAxis::new(trend, plunge).as_versor(),
+                );
+                assert!(
+                    (0.0..360.0).contains(&back.trend),
+                    "trend {} from {trend}/{plunge}",
+                    back.trend
+                );
+                assert!((-90.0..=90.0).contains(&back.plunge), "plunge {}", back.plunge);
+            }
+        }
+    }
 
     #[test]
     fn north_horizontal_is_the_north_versor() {
