@@ -7,3 +7,4 @@ pub mod geol_plane;
 pub mod inversion;
 pub mod slickenline;
 pub mod stress;
+pub mod stress_field;

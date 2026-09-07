@@ -360,6 +360,115 @@ cross S1 and not the other way, which is a sign error waiting to happen. Unlike
 the misfit, this one does scale with the magnitudes: the 1/0 default gives the
 normalized tensor the search runs on, and the true values give the tensor.
 
+## Density, and a stress field
+
+`lib/src/spatial/` estimates a density over located observations, and
+`lib/src/structural/stress_field.rs` uses the same machinery to invert a
+tensor at every node of a grid. Both are generic over the dimension of the
+field: two coordinates for a map of surface measurements, three for
+hypocentres. The geology stays three-dimensional either way — `N` says how many
+numbers locate an observation, not how many a fault plane needs.
+
+`spatial::kernel` is the estimator. A `Bandwidth` carries one extent per axis,
+in map units, and a `Kernel` is a Gaussian, a Gaussian truncated at so many
+bandwidths, or a quartic. Two decisions there are worth stating, because the
+alternative to each is what the C++ this descends from actually did.
+
+The normalizing constant is **derived from the dimension** rather than
+tabulated. A quartic kernel needs `15/16` on a line, `3/pi` on a plane and
+`105/(32 pi)` in a volume, and `InterpDensity3D` carried the planar constant in
+a volume kernel — so its output was not a density per unit volume, and two runs
+at different bandwidths were not comparable with each other. Here the constant
+comes out of a half-integer gamma recurrence at construction, so there is no
+version of it to pick the wrong one of.
+
+The bandwidth is in **map units and per axis**. In cells, it changes meaning
+when the grid is refined, which is exactly when a reader is looking for the
+answer to stop changing. Per axis, because a depth coordinate is not
+interchangeable with a horizontal one even when both are in metres: a
+seismogenic layer is far wider than it is thick, and an isotropic kernel over
+one mixes the top of it with the bottom before it mixes two neighbours.
+
+`spatial::grid::SamplingGrid` is a grid of sample points and deliberately not
+of cells. `origin` *is* the first node. A raster header that says `ORIGIN` may
+mean the corner of the first cell or its centre, and code that declares one
+while computing the other produces a field displaced by half a spacing —
+shifted rather than wrong-looking, and so survivable for years. There is
+nothing here to be ambiguous about.
+
+`spatial::density::Neighbourhood` bins the observations at the kernel's own
+reach, so a node's cost follows its neighbourhood rather than the dataset. A
+kernel with no reach — the untruncated Gaussian — is not refused but falls back
+to visiting everything, which is the kernel to use when checking a result
+against something else that did the same.
+
+### The two together
+
+`stress_field` walks a grid once, and at each node reports the density, the
+weight of data that reached it, and the inverted tensor:
+
+```rust
+let kernel = Kernel::quartic(Bandwidth::isotropic(6_000.0).unwrap());
+let cost = field_cost(&faults, &grid, kernel, SearchGrid::default(), 10.0);
+// -> nodes, nodes_to_invert, forward_solutions
+
+let field = stress_field(&faults, &grid, kernel, SearchGrid::default(), 10.0);
+field.nodes[0].density        // faults per unit area, from the same kernel
+field.nodes[0].support        // Kish's (sum w)^2 / sum w^2
+field.nodes[0].solution       // the whole InversionResult, runners-up included
+```
+
+This is Hardebeck and Michael's (2006) spatially varying inversion in its
+kernel form: rather than cutting the dataset into bins and damping neighbouring
+solutions towards each other, every fault contributes to every node it reaches,
+by an amount falling off with distance. Weighting is the only handle this search
+has for separating two superposed tectonic phases, and in a field the weights
+come from geography rather than from someone already knowing the answer.
+
+The density is computed in the same traversal because the two answer each
+other. A tensor from four faults is not the same object as one from two
+hundred, and a stress map read without the density beside it is a smoothed
+picture of where the data happen to be, presented as tectonics. `support` is
+what to read: it counts twenty faults contributing equally as twenty, and
+twenty of which nineteen sit on the far edge of the kernel as barely one. Nodes
+below `min_support` keep their density and are left without a tensor, so a thin
+patch stays legible instead of being filled with an answer the search will
+always produce.
+
+It does not follow that both belong on the same grid. On 300 faults over 40 km
+of map, a 6 km quartic kernel and the default search, a node cost about 350 ms
+to invert and microseconds to take a density at. So `density_field` stays
+available on its own for the fine grid, and this pass is for the coarse one
+where a tensor is actually wanted. The compact kernel is what makes even that
+affordable: each node saw about 22 of the 300 faults, so a hundred-node field
+cost four times a single inversion over the whole set rather than a hundred
+times it. `field_cost` walks the same nodes with the same kernel in well under
+a millisecond and reports the work the real pass would do — measured, not
+estimated from a formula, so a dataset clustered in one corner of its own grid
+is costed as such.
+
+### Against the reference
+
+`lib/tests/density_reference.rs` runs the estimator against `InterpDensity3D`
+on the same points, checking the three-dimensional constants, the grid
+registration and the node ordering at once — the three things this lineage has
+been wrong about. It agrees to within five parts in ten million, which is half
+a unit in the last digit the reference file prints: there is no digit left in
+which the two could disagree.
+
+The committed data are synthetic, from a seeded generator, with the extents
+arranged so the grid comes out 8 by 6 by 10 — three different counts, so a
+transposed traversal cannot pass by coincidence. `InterpDensity3D`'s own sample
+dataset would have been the obvious choice and is deliberately not used: it is
+somebody's earthquake catalogue arriving without a statement of its terms, and
+`example_data/NOTICE.md` sets the rule that vendored data travels under licence
+terms that can be named. That full volume was checked too, off to one side —
+91 686 nodes, 1 525 hypocentres, agreeing to the same five parts in ten million
+— but it is not this repository's to commit.
+
+Note what the reference is: the *corrected* `InterpDensity3D`, at 0.9 or later.
+The older one is wrong in ways an agreement would have propagated.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
