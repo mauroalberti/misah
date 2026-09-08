@@ -1,0 +1,261 @@
+# Wheels for the two platforms the GitLab pipeline cannot reach, and the release
+# that ties every artifact together.
+#
+# This project lives on GitLab; GitHub is a push mirror and this file arrives
+# there that way. Nothing is developed on that side. What it has that a GitLab
+# Free namespace does not is macOS and Windows runners, free and unmetered on
+# public repositories -- which is the whole reason for the mirror.
+#
+# Those two platforms went unbuilt for reasons that turn out to belong to
+# *cross*-compilation rather than to compilation. The Apple SDK licensing
+# question is about extracting an SDK in order to build from Linux, and does not
+# arise when the compiler runs on Apple hardware. `rusqlite`'s bundled feature
+# wants a C compiler, which `windows-latest` already carries, and not LLVM, its
+# bindings being pregenerated. A native runner dissolves both.
+#
+# Two things run here, on separate triggers:
+#
+#   - on every push and pull request, the Python suites on macOS and Windows.
+#     That is the coverage GitLab structurally cannot provide, and it is what
+#     this file is for. The Linux suites, clippy and the workspace build stay
+#     on GitLab and are deliberately not repeated.
+#   - on tags, all five artifacts, and then PyPI.
+#
+# `abi3-py39` is what keeps this small: the extension links no version-specific
+# CPython symbol, so it is one wheel per platform rather than one per platform
+# and interpreter.
+
+name: CI
+
+on:
+  push:
+    branches: [master, dev]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default. The one job that needs more asks for it itself.
+permissions:
+  contents: read
+
+# bash on every runner, Windows included: one script per step instead of one per
+# shell, and the same lines that already work on GitLab.
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A superseded pipeline has nothing left to say, so a new push cancels it --
+# except on tags, where the run may be halfway through an upload that cannot be
+# taken back.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+
+  # The suites on the two platforms that have never run them. `test:python` on
+  # GitLab does the same steps on Linux; what makes this job worth having is the
+  # operating system, not what it does.
+  test:
+    name: Python suites on ${{ matrix.os }}
+    strategy:
+      # Both platforms report, rather than the first failure hiding the other.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The built wheel rather than `maturin develop`: it is what a user
+      # installs, and installing it is part of what this job is checking.
+      - name: Build and install the wheel
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin numpy
+          cd pylib && maturin build --release --out ../wheels && cd ..
+          # By distribution name against a local directory, not by globbing the
+          # file: the wheel's name carries a version and a platform tag, and a
+          # glob that happens to work on one runner is a guess on the next.
+          # numpy is already installed, so --no-index costs nothing.
+          pip install --no-index --find-links wheels misah
+
+      # From the repository root, never from pylib, whose source tree shadows
+      # the installed package.
+      - name: Run the suites
+        run: |
+          python pylib/tests/test_stress.py
+          python pylib/tests/test_mesh.py
+          python pylib/tests/test_inversion.py
+          python pylib/tests/test_best_fit.py
+          python pylib/tests/test_kernels.py
+          python pylib/tests/test_fields.py
+          python pylib/tests/test_mechanisms.py
+
+  # ---------------------------------------------------------------------------
+  # Wheels and the source distribution
+  # ---------------------------------------------------------------------------
+  #
+  # Only on tags, for the reason the GitLab file gives: a wheel from an untagged
+  # commit is not something anyone installs.
+
+  wheels:
+    name: Wheel for ${{ matrix.arch }} on ${{ matrix.runner }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # manylinux_2_17 to match what `maturin --zig` produces on GitLab, so
+          # the compatibility floor stays a decision rather than an accident of
+          # whichever image built it. Here the container reaches that floor on
+          # its own, so zig would buy nothing.
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_17"
+            arch: x86_64
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: "2_17"
+            arch: aarch64
+          # One fat wheel for both Mac architectures instead of two thin ones.
+          # It builds from the arm64 runner and so depends on no Intel image --
+          # `macos-15-intel` is the last one and goes away in August 2027. The
+          # price is that the x86-64 half is compiled and never executed, which
+          # is exactly what the check below exists to catch.
+          - runner: macos-latest
+            target: universal2-apple-darwin
+            manylinux: auto
+            arch: universal2
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: auto
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Said outright rather than left to the action to infer: a fat binary
+      # needs both halves, and if either target were missing the failure would
+      # come out of the linker rather than from here.
+      - name: Rust targets for the fat binary
+        if: matrix.target == 'universal2-apple-darwin'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: pylib
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out ../wheels
+
+      # The machine type read out of the compiled object rather than off the
+      # file name. A build that silently produced a host binary passes every
+      # other check in this file, and on Linux the glibc floor the tag promises
+      # is checked against the symbols the binary actually references.
+      - name: Check the wheel is for the platform it claims
+        run: python ci/check_wheel.py 'wheels/*.whl' ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.arch }}-${{ matrix.runner }}
+          path: wheels/*.whl
+
+  # The source distribution. macOS and Windows no longer depend on it, having
+  # wheels of their own now, but everything else still does -- and `pip install`
+  # on the tarball is the only thing anywhere that exercises maturin's rewriting
+  # of the manifests when it packs a project whose crate lives outside the
+  # Python directory. The sdist working at all is a claim about that rewriting
+  # rather than about the code.
+  sdist:
+    name: Source distribution
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the tarball
+        run: |
+          pip install maturin numpy
+          cd pylib && maturin sdist --out ../wheels && cd ..
+
+      # From the tarball, not from the tree: the point is that what gets
+      # uploaded builds, not that the working copy does.
+      - name: Install it and run the suites
+        run: |
+          pip install wheels/*.tar.gz
+          python pylib/tests/test_stress.py
+          python pylib/tests/test_mesh.py
+          python pylib/tests/test_inversion.py
+          python pylib/tests/test_best_fit.py
+          python pylib/tests/test_kernels.py
+          python pylib/tests/test_fields.py
+          python pylib/tests/test_mechanisms.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: wheels/*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Publishing
+  # ---------------------------------------------------------------------------
+  #
+  # PyPI through Trusted Publishing, so no token is stored in this repository:
+  # GitHub mints a short-lived OIDC token for the job and the action trades it
+  # for an upload one.
+  #
+  # It needs configuring once on the PyPI side, and a publisher is per project.
+  # `misah` already exists there, so this is an ordinary publisher added beside
+  # the GitLab one rather than a pending one: owner `mauroalberti`, repository
+  # `misah`, workflow `CI.yml`, environment `release`.
+  #
+  # The environment is the gate, and it is not decoration. On GitLab the publish
+  # job is `when: manual` because a version is final once uploaded -- PyPI
+  # refuses to replace one -- so the pipeline builds and checks everything and
+  # then stops for someone to decide. The equivalent here is a *required
+  # reviewer* on the `release` environment, which public repositories get for
+  # free. Without one this job runs on its own and `git push --tags` becomes the
+  # irreversible act, which is precisely what that design set out to avoid.
+  publish:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, wheels, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/project/misah/
+    permissions:
+      # What Trusted Publishing needs, and the only reason this job holds any
+      # write permission at all.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Everything the stage above built: four wheels and the tarball.
+      - name: What is about to go out
+        run: ls -l dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
