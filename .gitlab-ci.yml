@@ -184,6 +184,38 @@ test:python:
 # Needs `CARGO_REGISTRY_TOKEN` as a masked, protected CI variable, and a
 # protected tag to go with it. `--locked` so the published crate is built from
 # the lockfile the tests ran against.
+#
+# That sentence was here before either half existed, and the first press of this
+# button found out what it leaves out. Written down now, because none of it is
+# guessable from a failure and all of it costs an afternoon the second time:
+#
+#   - The two halves are one prerequisite, not two. A *protected* variable is
+#     withheld from a pipeline on an unprotected ref, and withheld silently:
+#     nothing warns, the variable is simply absent, and cargo fails with
+#     `no token found, please run cargo login` as though it had never been
+#     configured. Set the tag rule up first and the variable second, or the
+#     symptom of a missing rule is indistinguishable from a missing token.
+#
+#   - Protected tags are under **Settings > Repository**, not Settings > CI/CD,
+#     which is where anyone who has just come from the Variables page will look
+#     for them. Add a `v*` wildcard rather than one tag at a time.
+#
+#   - The token has to be allowed to publish a crate that does *not yet exist*.
+#     crates.io scopes those separately from updates to a crate already there,
+#     and a token holding only the second fails the first publish exactly as an
+#     absent one does.
+#
+#   - Protected stays on even so. This project is public and pipelines run on
+#     branches and merge requests, where an unprotected variable would be
+#     readable by anyone who opened one.
+#
+# If the button is pressed again on a pipeline that was created before the tag
+# became protected and it still finds no token, suspect that the ref's protected
+# status was settled when the pipeline was created rather than when the job ran.
+# Confirmed only as a remedy, not as a mechanism: *Run pipeline* against the tag
+# builds a fresh one on the same commit, and the tag need not move. Nothing has
+# been published at that point -- `cargo publish` uploads once or not at all --
+# so the version is not spent.
 publish:crates:
   stage: publish
   rules:
