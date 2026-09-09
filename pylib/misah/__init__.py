@@ -13,8 +13,10 @@ ForwardStress.f95.
 What that gives up is the QGIS case the fallback existed for -- a plugin that
 cannot install a binary wheel now cannot use misah at all, rather than falling
 back to something slower. That is the same problem as the wheels themselves,
-and is to be solved there, by building for the platforms QGIS runs on, not by
-keeping a second implementation of everything in reserve.
+and was to be solved there, by building for the platforms QGIS runs on, not by
+keeping a second implementation of everything in reserve. It has been: there
+are wheels now for Windows, macOS and both Linux architectures, which leaves a
+far narrower case than the one this paragraph was written about.
 
 The extension is built as `misah._misah`, so its submodules register under that
 name. Aliasing here is what lets callers write `import misah.kernels`.

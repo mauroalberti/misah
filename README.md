@@ -770,7 +770,11 @@ What it also bought, and this is the loss: a QGIS plugin that cannot install a
 binary wheel could still use misah, slowly. It now cannot use it at all. That
 is the same problem as the wheels, and belongs there — building for the
 platforms QGIS runs on — rather than in a second implementation of everything
-kept in reserve.
+kept in reserve. Which is now what has happened: with wheels for Windows, macOS
+and both Linux architectures, a plugin that cannot install one is a far narrower
+case than when this was written. Narrow enough that if a fallback returns it
+should be a selective one — the functions cheap to write twice, not the grid
+search — and not the whole mirror again.
 
 All seven Python suites run in CI. `test_stress.py`, `test_mesh.py`,
 `test_inversion.py`, `test_best_fit.py`, `test_fields.py` and
@@ -859,22 +863,34 @@ The setuptools-rust leftovers are gone: `features.rs`, the empty
 superseded by maturin and broken besides — `setup.py` used an `install_requires`
 it never defined.
 
-`.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
-the examples, gates on clippy, and installs the built wheel to run all five
-Python suites against it — the bindings imported and called, not merely
-compiled. On tags it also builds the two wheels and the source
-distribution, and offers two manual jobs that upload them.
+The pipeline is in two files, and the split is not arbitrary. `.gitlab-ci.yml`
+runs everything on Linux at every push: the workspace and the examples built,
+clippy as a gate, and the wheel installed so that all seven Python suites run
+against it — the bindings imported and called, not merely compiled.
+`.github/workflows/CI.yml` runs those same seven suites on macOS and Windows,
+which is the one thing a GitLab Free namespace structurally cannot do, and on
+tags builds every artifact and uploads it.
 
-Manual because a version is final once uploaded — PyPI and crates.io alike
-refuse to replace one — so the tag builds and checks the artifacts, and someone
-then decides. `git push --tags` stays reversible; pressing the button does not.
-PyPI goes through Trusted Publishing, so no token is stored in this project:
-GitLab mints an OIDC token for the job and twine trades it for a short-lived
-upload token itself. A publisher is registered per PyPI project rather than per
-account, so this one is its own — a *pending* publisher until `misah` exists
-there, converted to an ordinary one by the first upload. crates.io takes the
-kernel crate alone; `misah-py` is the extension, depends on `misah` by path
-rather than by version, and is not something anyone adds to a Cargo.toml.
+GitHub is a push mirror and nothing is developed there; it holds that job
+because its macOS and Windows runners are free and unmetered on public
+repositories. The two Linux wheels went with the rest rather than staying
+behind, and not for tidiness: a version is final once uploaded, so two pipelines
+able to upload the same one is a hazard rather than a redundancy. One place
+builds every artifact and one place uploads them, and GitLab keeps what only it
+has — the whole Rust side, and `cargo publish`.
+
+Both uploads are manual, for that same finality: the tag builds and checks the
+artifacts, and someone then decides. `git push --tags` stays reversible;
+pressing the button does not. PyPI goes through Trusted Publishing, so no token
+is stored in either repository — the runner is minted a short-lived OIDC token
+and the publishing action trades it for one PyPI will accept. A publisher is
+registered per PyPI project rather than per account, so this one is its own, and
+what it names is the workflow *file*, `CI.yml`, rather than the `name:` inside
+it. The manual button has no equivalent on GitHub; a *required reviewer* on the
+`release` environment is what stands in for it, and without one `git push
+--tags` becomes the irreversible act. crates.io takes the kernel crate alone;
+`misah-py` is the extension, depends on `misah` by path rather than by version,
+and is not something anyone adds to a Cargo.toml.
 
 The two registries are independent, and nothing here makes one wait for the
 other: the sdist carries `lib/` inside it, so the Python distribution builds
@@ -907,61 +923,61 @@ A wheel built plainly on a development machine takes the glibc it happens to
 find: here that produced a `manylinux_2_34` tag, which pip will refuse to
 install on Ubuntu 20.04, Debian 11 or RHEL 8. That used to be the whole story,
 and the conclusion drawn from it — that nothing could reach a QGIS other than
-this one without macOS, Windows and aarch64 runners — was too pessimistic on
-three of the four platforms.
+this one without macOS, Windows and aarch64 runners — was right about needing
+the runners and wrong in supposing they could not be had.
 
-Both Linux wheels are **cross-compiled with zig**, from the ordinary x86-64
-runner a GitLab Free namespace gets. `maturin --zig` links against a glibc
-chosen at build time rather than whichever the image carries, so the floor
-becomes a decision instead of an accident:
+There are five artifacts: `manylinux_2_17` wheels for x86-64 and aarch64, a
+universal2 wheel for macOS, an MSVC wheel for Windows, and the source
+distribution. `abi3-py39` is what keeps that number down — the extension links
+no version-specific CPython symbol, so it is one wheel per *platform* rather
+than one per platform and interpreter version, five artifacts instead of thirty.
+
+**The compatibility floor is a decision and not an accident.** Which glibc a
+Linux wheel demands is otherwise whatever the build image happened to carry.
+Four ways of building the same extension, and the floor each one produces:
 
 | built by | tag | glibc actually required |
 | --- | --- | --- |
 | the host, plainly | `manylinux_2_34_x86_64` | 2.34 |
 | a `manylinux_2_28` container | `manylinux_2_28_x86_64` | 2.28 |
-| **zig, x86-64** | **`manylinux_2_17_x86_64`** | **2.14** |
-| **zig, aarch64** | **`manylinux_2_17_aarch64`** | **2.17** |
+| zig, x86-64 | `manylinux_2_17_x86_64` | 2.14 |
+| zig, aarch64 | `manylinux_2_17_aarch64` | 2.17 |
 
-The container route was tried first and works; zig reaches further and needs no
-container. Both zig wheels were verified: the x86-64 one installs and passes all
-four Python suites, and the aarch64 one carries a genuine ARM ELF — checked by
-`ci/check_wheel.py`, which reads the machine type out of the extension's own
-header rather than trusting the file name, since a cross-build that quietly
-produced a host binary would pass every other test in the pipeline.
+`maturin --zig` is how that floor was first reached, cross-compiling both Linux
+wheels from the single x86-64 runner a GitLab Free namespace gets, and for that
+situation it was the right tool rather than a workaround for lacking runners.
+It buys nothing where the wheels are built now — a `manylinux_2_17` container
+reaches the same floor on its own — but the floor was kept when the jobs moved,
+which is the point of the table: chosen once, and inherited afterwards on
+purpose.
 
-`abi3-py39` is what keeps this small: one wheel per platform rather than one per
-platform and interpreter version, so the whole matrix is five artifacts and the
-tag-only rule keeps it inside the Free tier's 400 compute minutes a month.
+Kept, and also checked. `ci/check_wheel.py` opens the extension inside the wheel
+and reads its own header rather than its file name: the machine type, so that a
+build which quietly produced a host binary is caught, and on Linux the versioned
+glibc symbols it references, so the tag becomes a claim the binary is held to.
+On macOS it reads Mach-O, thin and fat, and reports universal2 only when the
+pair of slices is exactly that — which matters more there than anywhere else,
+since that wheel is built on the arm64 runner and its x86-64 half is compiled
+and never executed. An arm64-only build would otherwise pass every test there
+is.
 
-**The source distribution is what the platforms without a wheel get.** With no
-wheel matching, pip falls back to the sdist and builds it, which needs a Rust
-toolchain on the user's machine but no runner here — the difference between a
-harder install and no install at all, which is what shipping wheels alone would
-have meant for macOS and Windows. `wheel:sdist` builds it and then installs
-*from the tarball* and runs the four suites against that, because the sdist
-takes a path nothing else in the pipeline does: maturin rewrites the manifests
-when it packs a project whose crate lives outside the Python directory, and with
-the version now inherited from the workspace, that rewriting is a claim to be
-checked rather than assumed. Verified here as well as in CI: the tarball
-installs into a clean virtualenv, compiles, and passes all four.
-
-**Windows was attempted twice and is not solved**, so there is no job for it
-here. Both attempts are worth recording, because neither failed for the reason
-one would guess and one of them is about this project rather than about the
-tooling.
+**Windows and macOS were the two holes, and both turned out to be problems of
+cross-compilation rather than of compilation.** That is why native runners
+closed them at a stroke, and why they had stayed open for so long against so
+much effort. The failed attempts are still worth recording, because neither
+failed for the reason one would guess.
 
 `rusqlite` is pulled in with the `bundled` feature, so every build compiles
-SQLite's C amalgamation — which makes a Windows cross-build need a C compiler
+SQLite's C amalgamation — which makes a Windows *cross*-build need a C compiler
 for Windows, not only a Rust target. That is invisible on the Linux side
-because zig ships a C compiler; it is the whole difficulty on the Windows one.
+because zig ships a C compiler; it was the whole difficulty on the Windows one.
 
 - **`x86_64-pc-windows-msvc` through cargo-xwin** downloads the Microsoft CRT
   and SDK — around 2.5 GB — and then stops at `failed to find tool "clang-cl"`.
   cargo-xwin supplies the headers and libraries but not the toolchain, which
-  wants `clang-cl`, `lld-link` and `llvm-lib` from LLVM. Fixable by installing
-  them; unattempted here because it is a system-package decision. Note that
-  the download alone is a real cost against a 400-minute monthly budget, and
-  large enough to sit awkwardly in a CI cache.
+  wants `clang-cl`, `lld-link` and `llvm-lib` from LLVM. The download alone is
+  a real cost against a metered budget, and large enough to sit awkwardly in a
+  CI cache.
 - **`x86_64-pc-windows-gnu` through zig** gets further — SQLite compiles — and
   fails at the link with `undefined symbol: PyInit_misah._misah`. That is this
   package's `module-name = "misah._misah"` reaching the export-definition file
@@ -969,14 +985,25 @@ because zig ships a C compiler; it is the whole difficulty on the Windows one.
   `PyInit__misah`. It is also the wrong target to want: CPython on Windows is
   built with MSVC, and a GNU-ABI extension is not the supported configuration.
 
-So the way forward on Windows is LLVM plus the MSVC target, not the GNU one.
+On `windows-latest` neither arises. MSVC is the native toolchain there, so the
+target is the ordinary one and `rusqlite` finds the C compiler it wanted all
+along — no CRT to download, no LLVM to install, no ABI to argue about. macOS
+was a licensing question before a technical one, and there too the question is
+narrower than it sounds: cross-compiling needs the Apple SDK, and what the
+licence speaks to is *extracting* one in order to build from Linux. It does not
+arise when the compiler runs on Apple hardware. Both holes were closed by moving
+the build rather than by solving what had been attempted.
 
-**macOS is the other hole**, and there it is a licensing question before a
-technical one — cross-compiling needs the Apple SDK. The ways out are a hosted
-macOS runner (Premium/Ultimate, or free through the GitLab for Open Source
-programme, which this project's GPL-3 licence and public namespace should
-qualify it for), or a mirror onto a service that gives macOS runners to public
-repositories.
+**The source distribution is what everything else gets.** With no wheel
+matching, pip falls back to it and builds, which needs a Rust toolchain on the
+user's machine but no runner here — a harder install rather than no install.
+macOS and Windows no longer depend on that, having wheels of their own, but the
+sdist job earns its place for a second reason: `pip install` on the tarball is
+the only thing anywhere that exercises maturin's rewriting of the manifests when
+it packs a project whose crate lives outside the Python directory, and with the
+version inherited from the workspace that rewriting is a claim to be checked
+rather than assumed. So the job installs *from the tarball* and never from the
+tree, and runs all seven suites against that.
 
 `docs/notebooks/misah.ipynb` was removed rather than repaired. Every path in it
 was dead, not merely the one previously named here: `misah.geometry.geom2d`,
