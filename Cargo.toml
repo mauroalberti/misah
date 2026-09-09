@@ -8,9 +8,19 @@ members = [
 # One number for the whole workspace, inherited by both members through
 # `version.workspace = true`. They were separately maintained and had drifted --
 # the crate at 0.2.0 while the bindings were at 0.2.0-alpha.0 -- which a tag
-# cannot express: a release is one commit, and `git tag v0.2.0-alpha.1` names it
-# once. The alpha is deliberate on both. It also means `pip install misah` and
-# `cargo add misah` pass this by, pre-releases being opt-in on either side, so
-# the pyproject README says `pip install --pre`.
+# cannot express: a release is one commit, and `git tag v0.2.0-alpha.2` names it
+# once. The alpha is deliberate on both.
+#
+# What that costs an installer is asymmetric, and on the Python side less than
+# it looks: pip skips a pre-release only when a stable version exists to prefer
+# instead, and misah has none, so `pip install misah` installs this one and
+# `--pre` is not needed until a stable release exists and an alpha after it is
+# wanted. Cargo is the stricter of the two -- `misah = "0.2"` does not match a
+# pre-release, a range admitting one only when the range itself names one -- so
+# a dependent there has to write `0.2.0-alpha.2` out in full.
+#
+# Moving this number is part of preparing a release and not an afterthought to
+# one: a build from the tree carries whatever is written here, so leaving it
+# behind means two different libraries answering to the same version.
 [workspace.package]
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"

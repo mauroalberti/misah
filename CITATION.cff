@@ -1,0 +1,42 @@
+# Machine-readable citation metadata: the format GitHub reads for its "Cite
+# this repository" button, and that reference managers understand directly.
+#
+# `version` and `date-released` are the two fields here that go stale on their
+# own. They describe a release rather than the repository, so they belong to the
+# same commit that moves `[workspace.package] version` in `Cargo.toml`, and are
+# wrong from the moment one is moved without the other.
+#
+# There is no `doi` yet, and an absent field is better than a placeholder that
+# resolves nowhere. One would come from archiving a release -- Zenodo being the
+# usual route, and reached from the GitHub side, which is where the mirror
+# already is -- so it is a decision about where the archive lives rather than a
+# blank to fill in.
+
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: misah
+abstract: >-
+  A Rust library for structural geology, with Python bindings through pyo3. It
+  intersects planes and triangulated surfaces with digital elevation models,
+  fits geological planes to scattered points, solves and inverts the
+  Wallace-Bott problem for fault-slip data, estimates kernel densities and
+  stress fields over a grid, and compares double-couple focal mechanisms through
+  the Kagan angle.
+type: software
+authors:
+  - family-names: Alberti
+    given-names: Mauro
+    email: alberti.m65@gmail.com
+version: 0.2.0-alpha.2
+date-released: "2026-09-09"
+license: GPL-3.0-or-later
+repository-code: https://gitlab.com/mauroalberti/misah
+url: https://gitlab.com/mauroalberti/misah
+keywords:
+  - structural geology
+  - geospatial
+  - digital elevation model
+  - fault-slip inversion
+  - focal mechanism
+  - Rust
+  - Python

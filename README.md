@@ -901,21 +901,31 @@ without `misah` ever reaching crates.io.
 `[workspace.package] version` in the root `Cargo.toml`, inherited by both
 members. They were maintained separately and had drifted — the crate at `0.2.0`
 while the bindings were at `0.2.0-alpha.0` — which a tag cannot express, a
-release being one commit. Both are now `0.2.0-alpha.1`, which maturin normalizes
-to `0.2.0a1` for PyPI.
+release being one commit. Both are now `0.2.0-alpha.2`, which maturin normalizes
+to `0.2.0a2` for PyPI.
 
 The alpha is deliberate, and what it costs an installer is less than it looks —
 which is worth recording, because this file first claimed the opposite. pip is
 said to skip pre-releases unless asked with `--pre`, and the rule is narrower
 than that: it skips them only when a stable version exists to prefer instead.
-misah has none, so `pip install misah` installs `0.2.0a1` today, verified by
-doing it from PyPI into a clean virtualenv. The flag becomes necessary the day a
-stable release exists and an alpha after it is wanted.
+misah has none, so `pip install misah` installs the alpha, verified by doing it
+from PyPI into a clean virtualenv. The flag becomes necessary the day a stable
+release exists and an alpha after it is wanted.
 
 Cargo is the stricter of the two, and there the usual statement does hold: a
-requirement like `misah = "0.2"` does not match `0.2.0-alpha.1`, since a version
+requirement like `misah = "0.2"` does not match `0.2.0-alpha.2`, since a version
 range admits a pre-release only when the range itself names one. Until a stable
 version is published, a dependent has to write the pre-release out in full.
+
+**The number moves before a release, not at it.** `0.2.0-alpha.1` was published
+on 29 August 2026 and then stood still while the density fields, the stress
+fields and the focal mechanisms went in behind it. Nothing in the tooling
+objects to that, which is what makes it worth naming: a wheel built from the
+tree afterwards calls itself `0.2.0a1` as well, installs cleanly over the
+published one, and answers to `density_field` — which the version on PyPI does
+not have. The version string is the only thing that distinguishes them, so
+testing against a local build says nothing about what an installer receives
+unless the two numbers are known to differ.
 
 ### Wheels
 
