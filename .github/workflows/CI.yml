@@ -273,3 +273,77 @@ jobs:
         run: ls -l dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ---------------------------------------------------------------------------
+  # The release object
+  # ---------------------------------------------------------------------------
+  #
+  # A GitHub Release, and it exists for one reason: Zenodo archives releases and
+  # mints a DOI for each, and a Release is the only event it listens for. A tag
+  # is not enough. Every tag here arrives by mirror, and mirroring pushes refs
+  # and nothing else, so without this job the tags would pile up on that side
+  # and nothing would ever reach Zenodo.
+  #
+  # It runs after `publish`, deliberately. The gate on the `release` environment
+  # is where a person decides the version goes out; a Release created before
+  # that would hand a DOI to something that might never ship, and a DOI is as
+  # permanent as the upload it stands for. Approval is what makes both real, and
+  # one approval should make them real together.
+  #
+  # No artifacts are attached. They are on PyPI, which is where anyone
+  # installing this looks, and two places holding the same five files is the
+  # arrangement this project spent a commit getting rid of. Zenodo archives the
+  # source tree at the tag in any case, not the release assets, so attaching
+  # them would buy nothing for the DOI either.
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating a release writes to the repository. Nothing else here does.
+      contents: write
+    steps:
+      # `fetch-tags` because a checkout of a tag ref brings the commit the tag
+      # points at, not the tag *object* -- and an annotated tag's message lives
+      # on the object. Without this the notes below come out empty.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Release, described by the tag itself
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The notes are the annotated tag's own message. A tag is written once,
+          # by hand, on the commit being released, and it already says what
+          # changed -- so this reads that back rather than asking for the same
+          # prose a second time in a second place, where the two would drift.
+          title=$(git for-each-ref "refs/tags/$TAG" --format='%(contents:subject)')
+          {
+            git for-each-ref "refs/tags/$TAG" --format='%(contents:body)'
+            printf -- '---\n\n'
+            printf 'Development happens on GitLab: https://gitlab.com/mauroalberti/misah\n'
+            printf 'This repository is a build mirror.\n\n'
+            printf 'Wheels and the source distribution: https://pypi.org/project/misah/\n'
+            printf 'The crate: https://crates.io/crates/misah\n'
+          } > notes.md
+
+          # A pre-release in the semver sense is one here too, so the flag
+          # follows the hyphen in the version rather than a decision taken again
+          # by hand at every tag.
+          case "$TAG" in
+            *-*) prerelease=--prerelease ;;
+            *)   prerelease= ;;
+          esac
+
+          # `--verify-tag` so a mistyped ref fails instead of quietly creating a
+          # tag of its own, which is the one thing this job must never do: the
+          # tags belong to GitLab and arrive from there.
+          gh release create "$TAG" \
+            --title "$title" \
+            --notes-file notes.md \
+            --verify-tag \
+            $prerelease

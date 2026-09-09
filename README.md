@@ -869,7 +869,11 @@ clippy as a gate, and the wheel installed so that all seven Python suites run
 against it — the bindings imported and called, not merely compiled.
 `.github/workflows/CI.yml` runs those same seven suites on macOS and Windows,
 which is the one thing a GitLab Free namespace structurally cannot do, and on
-tags builds every artifact and uploads it.
+tags builds every artifact, uploads it, and then makes the Release. That last
+step is there for archiving: Zenodo mints a DOI per release and listens for
+releases rather than for tags, and every tag here arrives by mirror, which
+pushes refs and nothing else. Its notes are the annotated tag's own message,
+read back rather than written twice.
 
 GitHub is a push mirror and nothing is developed there; it holds that job
 because its macOS and Windows runners are free and unmetered on public
