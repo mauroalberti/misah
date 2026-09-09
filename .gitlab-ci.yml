@@ -205,17 +205,45 @@ test:python:
 #     and a token holding only the second fails the first publish exactly as an
 #     absent one does.
 #
+#   - The crates.io account needs a **verified** email address, and entering one
+#     is not verifying it. This is the requirement that actually stopped the
+#     first publish here, after the other three had been satisfied. It is a
+#     server-side refusal and has nothing to do with the token -- reaching it at
+#     all proves the token arrived and was accepted -- but from the outside it
+#     is a fourth way to produce one word: failed.
+#
 #   - Protected stays on even so. This project is public and pipelines run on
 #     branches and merge requests, where an unprotected variable would be
-#     readable by anyone who opened one.
+#     readable by anyone who opened one. Nor does the *Variables* box on the
+#     New pipeline form help: what is typed there is expanded and **not
+#     masked**, so a token given that way is printed in the job log of a public
+#     project.
 #
-# If the button is pressed again on a pipeline that was created before the tag
-# became protected and it still finds no token, suspect that the ref's protected
-# status was settled when the pipeline was created rather than when the job ran.
-# Confirmed only as a remedy, not as a mechanism: *Run pipeline* against the tag
-# builds a fresh one on the same commit, and the tag need not move. Nothing has
-# been published at that point -- `cargo publish` uploads once or not at all --
-# so the version is not spent.
+# Read the trace. It took five attempts to publish this crate for the first
+# time, and four of them were spent inferring from the outside what the first
+# line of the log said outright. The job page shows it; the API does not, since
+# `/jobs/:id/trace` wants credentials the public endpoints do not.
+#
+# In particular the **duration tells you nothing**, however much it looks like
+# it should. The failures ran 47, 55, 61 and 51 seconds and the success ran 65,
+# so there is no reading of the clock that separates "died at the credential
+# check" from "packaged, verified and uploaded". The reason is at the top of
+# this file: `target/` is cached, and `cargo publish` builds its verification
+# copy in `target/package/<crate>/target`, which is inside that cache. What
+# looks like a build too fast to have happened is a build that was already
+# done.
+#
+# One thing that was never settled: whether retrying this job inside a pipeline
+# created *before* the tag became protected can pick up a protected variable at
+# all. The suspicion was that a ref's protected status is fixed when the
+# pipeline is created rather than when the job runs, but by the time the
+# variable existed the work had already moved to a fresh pipeline, so nothing
+# here proves it either way. *Run pipeline* against the tag -- Build > Pipelines,
+# then New pipeline, choosing the tag rather than a branch in the ref field --
+# costs one pipeline and removes the question. The tag need not move, and moving
+# it would be worse than useless: the tag is mirrored to GitHub, where a second
+# push would rebuild every artifact and try to upload a version PyPI already
+# holds.
 publish:crates:
   stage: publish
   rules:
