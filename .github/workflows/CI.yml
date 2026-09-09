@@ -234,9 +234,14 @@ jobs:
   # for an upload one.
   #
   # It needs configuring once on the PyPI side, and a publisher is per project.
-  # `misah` already exists there, so this is an ordinary publisher added beside
-  # the GitLab one rather than a pending one: owner `mauroalberti`, repository
-  # `misah`, workflow `CI.yml`, environment `release`.
+  # `misah` already exists there, so this is an ordinary publisher rather than a
+  # pending one: owner `mauroalberti`, repository `misah`, workflow `CI.yml`,
+  # environment `release`. The field easiest to get wrong is the workflow: it
+  # wants the file name, `CI.yml`, and not the `name:` written inside the file.
+  #
+  # It works. 0.2.0a2 went out this way on 2026-09-09, and the publisher that
+  # had been registered for the GitLab project was removed afterwards, which
+  # leaves this the only route anything takes to PyPI under this name.
   #
   # The environment is the gate, and it is not decoration. On GitLab the publish
   # job is `when: manual` because a version is final once uploaded -- PyPI

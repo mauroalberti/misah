@@ -169,10 +169,11 @@ test:python:
 # PyPI used to be published from here too, through Trusted Publishing on a
 # `release` environment, alongside the wheel jobs that fed it. Both went to
 # GitHub together: artifacts and upload belong in one place, or a release
-# becomes two buttons in two systems for one version. The trusted publisher
-# registered on PyPI for this GitLab project is now unused, and can be removed
-# from the project's Publishing settings -- leaving it is a standing permission
-# for a pipeline that no longer intends to use it.
+# becomes two buttons in two systems for one version. The trusted publisher that
+# had been registered on PyPI for this GitLab project was removed on 2026-09-09,
+# once the GitHub one had published a release: an unused publisher is a standing
+# permission for a pipeline that no longer intends to use it, which is a worse
+# thing to leave lying about than a stale job would have been.
 #
 # The two were independent anyway: the Python distribution is `misah` on PyPI,
 # the crate is `misah` on crates.io, and one can go out without the other.
