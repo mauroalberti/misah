@@ -1,5 +1,11 @@
-# Wheels for the two platforms the GitLab pipeline cannot reach, and the release
-# that ties every artifact together.
+# Every wheel this project ships, the source distribution, and the upload that
+# sends them out.
+#
+# The two Linux wheels were built on GitLab until this file could build the
+# other two, and they moved here once it could. Not for tidiness: a version is
+# final once uploaded, so two pipelines able to upload the same one is a hazard
+# rather than a redundancy. One place builds every artifact, one place uploads
+# them, and the other place keeps what only it can do.
 #
 # This project lives on GitLab; GitHub is a push mirror and this file arrives
 # there that way. Nothing is developed on that side. What it has that a GitLab
@@ -16,9 +22,9 @@
 # Two things run here, on separate triggers:
 #
 #   - on every push and pull request, the Python suites on macOS and Windows.
-#     That is the coverage GitLab structurally cannot provide, and it is what
-#     this file is for. The Linux suites, clippy and the workspace build stay
-#     on GitLab and are deliberately not repeated.
+#     That is the coverage GitLab structurally cannot provide, and the reason
+#     the mirror exists at all. The Linux suites, clippy and the workspace
+#     build stay on GitLab and are deliberately not repeated.
 #   - on tags, all five artifacts, and then PyPI.
 #
 # `abi3-py39` is what keeps this small: the extension links no version-specific
@@ -115,10 +121,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # manylinux_2_17 to match what `maturin --zig` produces on GitLab, so
-          # the compatibility floor stays a decision rather than an accident of
-          # whichever image built it. Here the container reaches that floor on
-          # its own, so zig would buy nothing.
+          # manylinux_2_17: the floor the GitLab pipeline reached with
+          # `maturin --zig` before these jobs moved here, kept deliberately
+          # rather than inherited. A compatibility floor should be a decision
+          # and not an accident of whichever image happened to build the wheel.
+          # The manylinux container reaches it on its own, so zig buys nothing
+          # on this side -- and `check_wheel.py` reads the glibc symbols back
+          # out of the binary, so the tag is checked rather than trusted.
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
