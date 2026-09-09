@@ -360,6 +360,192 @@ cross S1 and not the other way, which is a sign error waiting to happen. Unlike
 the misfit, this one does scale with the magnitudes: the 1/0 default gives the
 normalized tensor the search runs on, and the true values give the tensor.
 
+## Density, and a stress field
+
+`lib/src/spatial/` estimates a density over located observations, and
+`lib/src/structural/stress_field.rs` uses the same machinery to invert a
+tensor at every node of a grid. Both are generic over the dimension of the
+field: two coordinates for a map of surface measurements, three for
+hypocentres. The geology stays three-dimensional either way — `N` says how many
+numbers locate an observation, not how many a fault plane needs.
+
+`spatial::kernel` is the estimator. A `Bandwidth` carries one extent per axis,
+in map units, and a `Kernel` is a Gaussian, a Gaussian truncated at so many
+bandwidths, or a quartic. Two decisions there are worth stating, because the
+alternative to each is what the C++ this descends from actually did.
+
+The normalizing constant is **derived from the dimension** rather than
+tabulated. A quartic kernel needs `15/16` on a line, `3/pi` on a plane and
+`105/(32 pi)` in a volume, and `InterpDensity3D` carried the planar constant in
+a volume kernel — so its output was not a density per unit volume, and two runs
+at different bandwidths were not comparable with each other. Here the constant
+comes out of a half-integer gamma recurrence at construction, so there is no
+version of it to pick the wrong one of.
+
+The bandwidth is in **map units and per axis**. In cells, it changes meaning
+when the grid is refined, which is exactly when a reader is looking for the
+answer to stop changing. Per axis, because a depth coordinate is not
+interchangeable with a horizontal one even when both are in metres: a
+seismogenic layer is far wider than it is thick, and an isotropic kernel over
+one mixes the top of it with the bottom before it mixes two neighbours.
+
+`spatial::grid::SamplingGrid` is a grid of sample points and deliberately not
+of cells. `origin` *is* the first node. A raster header that says `ORIGIN` may
+mean the corner of the first cell or its centre, and code that declares one
+while computing the other produces a field displaced by half a spacing —
+shifted rather than wrong-looking, and so survivable for years. There is
+nothing here to be ambiguous about.
+
+`spatial::density::Neighbourhood` bins the observations at the kernel's own
+reach, so a node's cost follows its neighbourhood rather than the dataset. A
+kernel with no reach — the untruncated Gaussian — is not refused but falls back
+to visiting everything, which is the kernel to use when checking a result
+against something else that did the same.
+
+### The two together
+
+`stress_field` walks a grid once, and at each node reports the density, the
+weight of data that reached it, and the inverted tensor:
+
+```rust
+let kernel = Kernel::quartic(Bandwidth::isotropic(6_000.0).unwrap());
+let cost = field_cost(&faults, &grid, kernel, SearchGrid::default(), 10.0);
+// -> nodes, nodes_to_invert, forward_solutions
+
+let field = stress_field(&faults, &grid, kernel, SearchGrid::default(), 10.0);
+field.nodes[0].density        // faults per unit area, from the same kernel
+field.nodes[0].support        // Kish's (sum w)^2 / sum w^2
+field.nodes[0].solution       // the whole InversionResult, runners-up included
+```
+
+This is Hardebeck and Michael's (2006) spatially varying inversion in its
+kernel form: rather than cutting the dataset into bins and damping neighbouring
+solutions towards each other, every fault contributes to every node it reaches,
+by an amount falling off with distance. Weighting is the only handle this search
+has for separating two superposed tectonic phases, and in a field the weights
+come from geography rather than from someone already knowing the answer.
+
+The density is computed in the same traversal because the two answer each
+other. A tensor from four faults is not the same object as one from two
+hundred, and a stress map read without the density beside it is a smoothed
+picture of where the data happen to be, presented as tectonics. `support` is
+what to read: it counts twenty faults contributing equally as twenty, and
+twenty of which nineteen sit on the far edge of the kernel as barely one. Nodes
+below `min_support` keep their density and are left without a tensor, so a thin
+patch stays legible instead of being filled with an answer the search will
+always produce.
+
+It does not follow that both belong on the same grid. On 300 faults over 40 km
+of map, a 6 km quartic kernel and the default search, a node cost about 350 ms
+to invert and microseconds to take a density at. So `density_field` stays
+available on its own for the fine grid, and this pass is for the coarse one
+where a tensor is actually wanted. The compact kernel is what makes even that
+affordable: each node saw about 22 of the 300 faults, so a hundred-node field
+cost four times a single inversion over the whole set rather than a hundred
+times it. `field_cost` walks the same nodes with the same kernel in well under
+a millisecond and reports the work the real pass would do — measured, not
+estimated from a formula, so a dataset clustered in one corner of its own grid
+is costed as such.
+
+Both passes run across rayon's thread pool, and both give **bit for bit** what
+one thread would. That is worth stating because it is the property parallel
+numerics usually lose: a reduction that lets threads combine partial sums adds
+the same terms in an order that depends on how the work was split, so the last
+bits move when the machine changes. Nothing of the kind happens here. The split
+is over nodes; a node's value is a sequential sum over its own neighbourhood in
+an order fixed by the bin layout; threads never share an accumulator; and the
+field's counters are summed from per-node outcomes, integer addition not caring
+what order it happens in.
+
+The split also keeps the cores fed, which is not automatic when nodes cost
+anything from nothing to a full search: on the run above, 3.93 threads' worth of
+CPU was consumed on four threads and 6.92 on eight. Wall-clock went from 21.6 s
+to between five and seven, three to four times rather than seven, and the
+shortfall is the machine and not the schedule — a 15 W mobile part holding its
+all-core clock far below its single-core turbo, two hardware threads to a
+physical core. Where the clock holds, the wall time follows the occupancy.
+`rayon::ThreadPoolBuilder::install` bounds the pool where taking the machine is
+not acceptable.
+
+### Against the reference
+
+`lib/tests/density_reference.rs` runs the estimator against `InterpDensity3D`
+on the same points, checking the three-dimensional constants, the grid
+registration and the node ordering at once — the three things this lineage has
+been wrong about. It agrees to within five parts in ten million, which is half
+a unit in the last digit the reference file prints: there is no digit left in
+which the two could disagree.
+
+The committed data are synthetic, from a seeded generator, with the extents
+arranged so the grid comes out 8 by 6 by 10 — three different counts, so a
+transposed traversal cannot pass by coincidence. `InterpDensity3D`'s own sample
+dataset would have been the obvious choice and is deliberately not used: it is
+somebody's earthquake catalogue arriving without a statement of its terms, and
+`example_data/NOTICE.md` sets the rule that vendored data travels under licence
+terms that can be named. That full volume was checked too, off to one side —
+91 686 nodes, 1 525 hypocentres, agreeing to the same five parts in ten million
+— but it is not this repository's to commit.
+
+Note what the reference is: the *corrected* `InterpDensity3D`, at 0.9 or later.
+The older one is wrong in ways an agreement would have propagated.
+
+## Focal mechanisms, and the Kagan angle
+
+`algebra::quaternion` and `structural::focal_mechanism` carry a double-couple
+focal mechanism as its **P, T and B** kinematic axes, and
+`structural::rotation` gives the rotation between two of them after Kagan
+(1991).
+
+Nodal planes are the usual way a mechanism is quoted and deliberately not what
+this takes: nothing in the seismology says which of the two planes slipped, so
+a pair of planes is an ambiguous input where P and T are not.
+`PTBAxes::from_fault_slickenline` converts from a fault plane and its slip,
+which is the unambiguous form of the same thing — and requires the sense of
+movement to be known, because reversing an undetermined slip exchanges P with
+T and returns shortening where the rock recorded extension.
+
+**P and T are not stress axes.** They are kinematic, pinned at 45 degrees to
+the fault plane by construction, and coincide with the principal stresses only
+under Anderson's assumption. Where this crate means stress it says stress, and
+`structural::inversion` is what solves for it.
+
+### Four answers, not one
+
+A double couple is unchanged by a half turn about any of its own axes, so the
+question "what rotation carries mechanism 1 onto mechanism 2" has four equally
+correct answers. `focal_mechanism_rotations` returns all four, sorted by the
+size of the turn; the smallest is the **Kagan angle**, the standard measure of
+how far apart two mechanisms are. The other three are kept because a minimum
+quoted without its alternatives is a number nobody can check.
+
+No two double couples are more than 120 degrees apart — 120 and not the 180 a
+general pair of frames would allow — and that bound is the cheapest check there
+is on an implementation of this. A wrong set of symmetry generators fails it at
+once. The tests sweep 2000 random pairs against it, and against Kagan's own
+published table of four solutions.
+
+### What the Fortran had wrong here
+
+The reference is `GeoFaults/` in this repository's own history — Alberti
+(2010)'s `FaultCorrelation.f95` and the modules under it, removed in `961d8b9`
+and recoverable with `git show 961d8b9^:GeoFaults/…`. There is no separate
+repository, and no submodule.
+
+`quaternfromcartmatr` there takes four square roots whose arguments are
+non-negative in exact arithmetic and not in floating point. At a **trace of
+-1** — a rotation by 180 degrees, which is what two strike-slip mechanisms a
+whole number of degrees apart give — one argument that should be exactly zero
+lands a few times 10⁻¹⁶ below it, and the Fortran returns NaN in silence. It
+went unseen for twenty years because it needs the trace to be *exactly* -1:
+round-degree catalogue data and textbook examples produce that constantly, and
+random doubles essentially never. `Quaternion::from_rotation_matrix` clamps,
+which is safe because the branch taken always divides by a component at or
+above the mean of the four, so a clamped zero never reaches a denominator.
+
+Everything else in that Fortran's Kagan path was verified rather than assumed:
+`triadvectors_rotsolution` gives bit-identical output compiled with and without
+`-fimplicit-none`, which is not true of its sibling `ForwardStress.f95`.
+
 ## Python bindings
 
 `pylib` builds the `misah` Python distribution with maturin, against pyo3 0.29
@@ -378,7 +564,8 @@ the aliases `misah/__init__.py` sets up.
 cd pylib
 maturin develop --release   # build and install into the active environment
 maturin build --release     # produce a wheel under target/wheels
-python3 tests/test_kernels.py
+cd ..
+python3 pylib/tests/test_kernels.py   # never from pylib, which shadows the install
 ```
 
 ```python
@@ -477,6 +664,84 @@ matrix = stress_tensor(*best["s1"], *best["s3"], best["phi"],
                        sigma1=30.0, sigma3=10.0)
 ```
 
+```python
+from misah.kernels import covering_grid, density_field, field_cost, stress_field
+
+# A grid around the data. `origin` is the first sample point, not a cell
+# corner, and `margin` should be about the kernel's reach.
+grid = covering_grid(hypocentres, spacing=[500.0] * 3, margin=1500.0)
+
+# Observations per unit volume at every node, flat, first axis fastest.
+values = density_field(hypocentres, grid["origin"], grid["spacing"],
+                       grid["counts"], bandwidth=[1500.0] * 3)
+volume = values.reshape(grid["counts"], order="F")
+
+# Summed over the grid and multiplied by the cell volume, that comes back as
+# the number of observations. It is one line and it is worth running.
+values.sum() * float(np.prod(grid["spacing"]))
+```
+
+```python
+# What the field will cost, in milliseconds, before committing to it.
+field_cost(positions, faults, origin, spacing, counts, [4000.0] * 2,
+           min_support=10.0)
+# -> nodes, nodes_to_invert, forward_solutions
+
+field, stats = stress_field(positions, faults, origin, spacing, counts,
+                            bandwidth=[4000.0] * 2, min_support=10.0)
+
+field["density"]                  # faults per unit area, same kernel
+field["support"]                  # Kish's (sum w)^2 / sum w^2 -- read this one
+field["s1"]                       # (M, 2) trend and plunge, NaN where no tensor
+field["runner_up_s1_degrees"]     # how far the nearest rival answer sits
+stats["nodes_below_threshold"]    # holes left as holes
+```
+
+`positions` is an (M, D) array with D of 1, 2 or 3 — the dimension of the
+*field*, not of the geology, read off the width of the array. Everything comes
+back flat in the grid's own order, first axis fastest, so the columns align
+with each other and with `density_field` on the same grid; `reshape(counts,
+order="F")` lays one out.
+
+Both run across every core and release the interpreter while they do. The
+answer does not depend on the thread count, bit for bit: the split is over
+nodes, each node's arithmetic stays sequential inside it, and no accumulator is
+shared. `RAYON_NUM_THREADS` bounds the pool where taking the machine is not
+acceptable — a QGIS plugin, say. Measured on a four-core laptop, one field took
+7.54 s at one thread, 3.73 s at two and 1.51 s unbounded.
+
+```python
+from misah.kernels import (ptb_axes, kagan_angles, kagan_angle_matrix,
+                           focal_mechanism_rotations)
+
+# P, T and B axes from faults and their slip. Same (N, 4) array
+# invert_stress takes -- but the sense of movement must be known here, or
+# P and T swap and shortening is reported as extension.
+axes = ptb_axes(faults)          # -> p, t, b, each (N, 2) trend and plunge
+
+# A mechanism crosses as four numbers: P trend, P plunge, T trend, T plunge.
+kagan_angles(first, second)      # (N,) elementwise, 0 to 120 degrees
+kagan_angle_matrix(catalogue)    # (N, N), symmetric, zero diagonal
+
+# All four rotations for one pair, smallest turn first.
+focal_mechanism_rotations(232.0, 41.0, 120.0, 24.0,
+                          51.0, 17.0, 295.0, 55.0)
+# -> trend, plunge, angle_degrees, each (4,)
+```
+
+The matrix is why any of this is in Rust: comparing a catalogue with itself is
+`N²/2` rotations, trivial once and ruinous in a Python loop at N in the
+thousands. It runs across every core with the interpreter released — 600
+mechanisms, 180 000 pairs, 32 ms. Symmetric with a zero diagonal, so it goes
+straight into a clustering routine, which is the usual reason to want one.
+
+Worked examples are in [`docs/notebooks`](docs/notebooks): kernel density in
+`01_kernel_density.ipynb`, the stress field in `02_stress_field.ipynb`, focal
+mechanisms and the Kagan angle in `03_focal_mechanisms.ipynb`. Each generates
+its own data — through the forward model, or against Kagan's published table —
+so the answer is known without trusting the code, and each carries its output so
+it reads without being run.
+
 The extension is built as `misah._misah`, so its submodules register themselves
 under that name; `misah/__init__.py` aliases them, which is what makes
 `import misah.kernels` work rather than only `misah._misah.kernels`.
@@ -505,18 +770,34 @@ What it also bought, and this is the loss: a QGIS plugin that cannot install a
 binary wheel could still use misah, slowly. It now cannot use it at all. That
 is the same problem as the wheels, and belongs there — building for the
 platforms QGIS runs on — rather than in a second implementation of everything
-kept in reserve.
+kept in reserve. Which is now what has happened: with wheels for Windows, macOS
+and both Linux architectures, a plugin that cannot install one is a far narrower
+case than when this was written. Narrow enough that if a fallback returns it
+should be a selective one — the functions cheap to write twice, not the grid
+search — and not the whole mirror again.
 
-The test files split by what they need, not by what they cover.
-`test_stress.py`, `test_mesh.py`, `test_inversion.py` and `test_best_fit.py`
-are numbers in, numbers out, so all four run in CI; `test_kernels.py` reads the Malpi crop
-from the geoSurfDEM repository and runs by hand. `test_inversion.py` needs no
-fixture at all, generating its faults through `solve_stress` from a tensor
-chosen in advance and asking the inversion to find that tensor again — the two
-halves of the Python surface checked against each other, rather than either
-against numbers copied over from the Rust tests. The DEM committed under `example_data` is a wider crop of the same
-ASTER tile — 213x260 against 200x247 — so it cannot stand in without rewriting
-the vertex counts those tests assert.
+All seven Python suites run in CI. `test_stress.py`, `test_mesh.py`,
+`test_inversion.py`, `test_best_fit.py`, `test_fields.py` and
+`test_mechanisms.py` are numbers in, numbers out;
+`test_inversion.py` needs no fixture at all, generating its faults through
+`solve_stress` from a tensor chosen in advance and asking the inversion to find
+that tensor again — the two halves of the Python surface checked against each
+other, rather than either against numbers copied over from the Rust tests.
+
+`test_kernels.py` needs a DEM, and used to read the Malpi crop from a checkout
+of geoSurfDEM sitting beside this one, which meant the raster bindings — the
+half of the surface with a golden trace to be measured against — were the half
+nobody but the author could check. They are now checked by anyone with this
+repository. The crop committed under `example_data` is a wider window on the
+same ASTER tile, 213 x 260 against 200 x 247, and *wider on the same grid*:
+the golden crop's corner is exactly seven cells in from it, east and north, and
+the elevations agree value for value over the overlap. So the suite cuts the
+200 x 247 window out of the committed file and intersects that, which is not a
+substitute for the grid the trace was computed on but that grid itself — 404
+vertices, unchanged, from data in this tree. The window is derived from the
+golden crop's own corner coordinates rather than written down as four array
+indices, so a committed DEM that stopped containing it would fail the suite
+instead of quietly moving the trace onto different ground.
 
 Run the tests from anywhere except `pylib` itself, whose source tree shadows the
 installed package.
@@ -528,20 +809,32 @@ the only raster format handled, anything wider meaning GDAL. It returns the
 nodata value as an `Option` rather than defaulting to -9999 on a file's behalf,
 since at sea that is a depth and not a hole.
 
-`structural::focal_mechanism` is still an empty struct, and
 `gp_projected_focal_mechanisms` is read from a GeoProfiler export into records
-that nothing yet computes with — the next thing in this direction, and the one
-`structural::stress` would extend to, focal mechanisms being fault-slip data
-that arrives already reduced to a plane and a rake.
+that nothing yet computes with. `structural::focal_mechanism` now carries the
+P/T/B triad those records would feed, so the join is a matter of wiring rather
+than of arithmetic.
 
-The Python surface is ten functions: `intersect_plane_grid`,
+The Python surface is twenty functions: `intersect_plane_grid`,
 `intersect_mesh_grid`, `best_fit_planes` and `plane_normal` for the raster
-side, `solve_stress`,
-`rake_to_slickenline`, `stress_tensor`, `score_stress`, `invert_stress` and
-`inversion_candidate_count` for the structural side. Each builds and consumes
-the types it needs within the one call rather than handing them across the
-boundary, so the surface stays plain arrays and numbers in, arrays and dicts
-out.
+side; `solve_stress`, `rake_to_slickenline`, `stress_tensor`, `score_stress`,
+`invert_stress` and `inversion_candidate_count` for the structural side;
+`covering_grid`, `kernel_profile`, `density_field`, `stress_field` and
+`field_cost` for the fields; and `ptb_axes`, `kagan_angles`,
+`kagan_angle_matrix`, `focal_mechanism_rotations` and
+`rotate_focal_mechanism` for focal mechanisms. Each builds and consumes the types it needs within
+the one call rather than handing them across the boundary, so the surface stays
+plain arrays and numbers in, arrays and dicts out.
+
+The field five are where that costs something worth naming. `N`, the dimension
+an observation is located in, is a const generic on the Rust side — one compiled
+copy per dimension, chosen when the code is written — and on the Python side it
+is the width of an array, at run time. The bridge is a match over 1, 2 and 3,
+and it is why a field here is one, two or three dimensional rather than any
+number: each is a monomorphisation somebody has to name. One dimension is not
+padding for a tidy range, either. A histogram of hypocentral depths is a
+one-dimensional density, and estimating it with a kernel rather than with bins
+removes both of a histogram's troubles at once — edges chosen by hand, and an
+answer that changes when they move.
 
 What remains Rust-only is the GeoProfiler SQLite reader, and deliberately:
 Python has `sqlite3` in its standard library and can read a GeoProfiler export
@@ -570,22 +863,34 @@ The setuptools-rust leftovers are gone: `features.rs`, the empty
 superseded by maturin and broken besides — `setup.py` used an `install_requires`
 it never defined.
 
-`.gitlab-ci.yml` runs the tests on Linux at every push, builds the workspace and
-the examples, gates on clippy, and installs the built wheel to run the four
-data-free Python suites against it — the bindings imported and called, not
-merely compiled. On tags it also builds the two wheels and the source
-distribution, and offers two manual jobs that upload them.
+The pipeline is in two files, and the split is not arbitrary. `.gitlab-ci.yml`
+runs everything on Linux at every push: the workspace and the examples built,
+clippy as a gate, and the wheel installed so that all seven Python suites run
+against it — the bindings imported and called, not merely compiled.
+`.github/workflows/CI.yml` runs those same seven suites on macOS and Windows,
+which is the one thing a GitLab Free namespace structurally cannot do, and on
+tags builds every artifact and uploads it.
 
-Manual because a version is final once uploaded — PyPI and crates.io alike
-refuse to replace one — so the tag builds and checks the artifacts, and someone
-then decides. `git push --tags` stays reversible; pressing the button does not.
-PyPI goes through Trusted Publishing, so no token is stored in this project:
-GitLab mints an OIDC token for the job and twine trades it for a short-lived
-upload token itself. A publisher is registered per PyPI project rather than per
-account, so this one is its own — a *pending* publisher until `misah` exists
-there, converted to an ordinary one by the first upload. crates.io takes the
-kernel crate alone; `misah-py` is the extension, depends on `misah` by path
-rather than by version, and is not something anyone adds to a Cargo.toml.
+GitHub is a push mirror and nothing is developed there; it holds that job
+because its macOS and Windows runners are free and unmetered on public
+repositories. The two Linux wheels went with the rest rather than staying
+behind, and not for tidiness: a version is final once uploaded, so two pipelines
+able to upload the same one is a hazard rather than a redundancy. One place
+builds every artifact and one place uploads them, and GitLab keeps what only it
+has — the whole Rust side, and `cargo publish`.
+
+Both uploads are manual, for that same finality: the tag builds and checks the
+artifacts, and someone then decides. `git push --tags` stays reversible;
+pressing the button does not. PyPI goes through Trusted Publishing, so no token
+is stored in either repository — the runner is minted a short-lived OIDC token
+and the publishing action trades it for one PyPI will accept. A publisher is
+registered per PyPI project rather than per account, so this one is its own, and
+what it names is the workflow *file*, `CI.yml`, rather than the `name:` inside
+it. The manual button has no equivalent on GitHub; a *required reviewer* on the
+`release` environment is what stands in for it, and without one `git push
+--tags` becomes the irreversible act. crates.io takes the kernel crate alone;
+`misah-py` is the extension, depends on `misah` by path rather than by version,
+and is not something anyone adds to a Cargo.toml.
 
 The two registries are independent, and nothing here makes one wait for the
 other: the sdist carries `lib/` inside it, so the Python distribution builds
@@ -596,21 +901,31 @@ without `misah` ever reaching crates.io.
 `[workspace.package] version` in the root `Cargo.toml`, inherited by both
 members. They were maintained separately and had drifted — the crate at `0.2.0`
 while the bindings were at `0.2.0-alpha.0` — which a tag cannot express, a
-release being one commit. Both are now `0.2.0-alpha.1`, which maturin normalizes
-to `0.2.0a1` for PyPI.
+release being one commit. Both are now `0.2.0-alpha.2`, which maturin normalizes
+to `0.2.0a2` for PyPI.
 
 The alpha is deliberate, and what it costs an installer is less than it looks —
 which is worth recording, because this file first claimed the opposite. pip is
 said to skip pre-releases unless asked with `--pre`, and the rule is narrower
 than that: it skips them only when a stable version exists to prefer instead.
-misah has none, so `pip install misah` installs `0.2.0a1` today, verified by
-doing it from PyPI into a clean virtualenv. The flag becomes necessary the day a
-stable release exists and an alpha after it is wanted.
+misah has none, so `pip install misah` installs the alpha, verified by doing it
+from PyPI into a clean virtualenv. The flag becomes necessary the day a stable
+release exists and an alpha after it is wanted.
 
 Cargo is the stricter of the two, and there the usual statement does hold: a
-requirement like `misah = "0.2"` does not match `0.2.0-alpha.1`, since a version
+requirement like `misah = "0.2"` does not match `0.2.0-alpha.2`, since a version
 range admits a pre-release only when the range itself names one. Until a stable
 version is published, a dependent has to write the pre-release out in full.
+
+**The number moves before a release, not at it.** `0.2.0-alpha.1` was published
+on 29 August 2026 and then stood still while the density fields, the stress
+fields and the focal mechanisms went in behind it. Nothing in the tooling
+objects to that, which is what makes it worth naming: a wheel built from the
+tree afterwards calls itself `0.2.0a1` as well, installs cleanly over the
+published one, and answers to `density_field` — which the version on PyPI does
+not have. The version string is the only thing that distinguishes them, so
+testing against a local build says nothing about what an installer receives
+unless the two numbers are known to differ.
 
 ### Wheels
 
@@ -618,61 +933,61 @@ A wheel built plainly on a development machine takes the glibc it happens to
 find: here that produced a `manylinux_2_34` tag, which pip will refuse to
 install on Ubuntu 20.04, Debian 11 or RHEL 8. That used to be the whole story,
 and the conclusion drawn from it — that nothing could reach a QGIS other than
-this one without macOS, Windows and aarch64 runners — was too pessimistic on
-three of the four platforms.
+this one without macOS, Windows and aarch64 runners — was right about needing
+the runners and wrong in supposing they could not be had.
 
-Both Linux wheels are **cross-compiled with zig**, from the ordinary x86-64
-runner a GitLab Free namespace gets. `maturin --zig` links against a glibc
-chosen at build time rather than whichever the image carries, so the floor
-becomes a decision instead of an accident:
+There are five artifacts: `manylinux_2_17` wheels for x86-64 and aarch64, a
+universal2 wheel for macOS, an MSVC wheel for Windows, and the source
+distribution. `abi3-py39` is what keeps that number down — the extension links
+no version-specific CPython symbol, so it is one wheel per *platform* rather
+than one per platform and interpreter version, five artifacts instead of thirty.
+
+**The compatibility floor is a decision and not an accident.** Which glibc a
+Linux wheel demands is otherwise whatever the build image happened to carry.
+Four ways of building the same extension, and the floor each one produces:
 
 | built by | tag | glibc actually required |
 | --- | --- | --- |
 | the host, plainly | `manylinux_2_34_x86_64` | 2.34 |
 | a `manylinux_2_28` container | `manylinux_2_28_x86_64` | 2.28 |
-| **zig, x86-64** | **`manylinux_2_17_x86_64`** | **2.14** |
-| **zig, aarch64** | **`manylinux_2_17_aarch64`** | **2.17** |
+| zig, x86-64 | `manylinux_2_17_x86_64` | 2.14 |
+| zig, aarch64 | `manylinux_2_17_aarch64` | 2.17 |
 
-The container route was tried first and works; zig reaches further and needs no
-container. Both zig wheels were verified: the x86-64 one installs and passes all
-four Python suites, and the aarch64 one carries a genuine ARM ELF — checked by
-`ci/check_wheel.py`, which reads the machine type out of the extension's own
-header rather than trusting the file name, since a cross-build that quietly
-produced a host binary would pass every other test in the pipeline.
+`maturin --zig` is how that floor was first reached, cross-compiling both Linux
+wheels from the single x86-64 runner a GitLab Free namespace gets, and for that
+situation it was the right tool rather than a workaround for lacking runners.
+It buys nothing where the wheels are built now — a `manylinux_2_17` container
+reaches the same floor on its own — but the floor was kept when the jobs moved,
+which is the point of the table: chosen once, and inherited afterwards on
+purpose.
 
-`abi3-py39` is what keeps this small: one wheel per platform rather than one per
-platform and interpreter version, so the whole matrix is five artifacts and the
-tag-only rule keeps it inside the Free tier's 400 compute minutes a month.
+Kept, and also checked. `ci/check_wheel.py` opens the extension inside the wheel
+and reads its own header rather than its file name: the machine type, so that a
+build which quietly produced a host binary is caught, and on Linux the versioned
+glibc symbols it references, so the tag becomes a claim the binary is held to.
+On macOS it reads Mach-O, thin and fat, and reports universal2 only when the
+pair of slices is exactly that — which matters more there than anywhere else,
+since that wheel is built on the arm64 runner and its x86-64 half is compiled
+and never executed. An arm64-only build would otherwise pass every test there
+is.
 
-**The source distribution is what the platforms without a wheel get.** With no
-wheel matching, pip falls back to the sdist and builds it, which needs a Rust
-toolchain on the user's machine but no runner here — the difference between a
-harder install and no install at all, which is what shipping wheels alone would
-have meant for macOS and Windows. `wheel:sdist` builds it and then installs
-*from the tarball* and runs the four suites against that, because the sdist
-takes a path nothing else in the pipeline does: maturin rewrites the manifests
-when it packs a project whose crate lives outside the Python directory, and with
-the version now inherited from the workspace, that rewriting is a claim to be
-checked rather than assumed. Verified here as well as in CI: the tarball
-installs into a clean virtualenv, compiles, and passes all four.
-
-**Windows was attempted twice and is not solved**, so there is no job for it
-here. Both attempts are worth recording, because neither failed for the reason
-one would guess and one of them is about this project rather than about the
-tooling.
+**Windows and macOS were the two holes, and both turned out to be problems of
+cross-compilation rather than of compilation.** That is why native runners
+closed them at a stroke, and why they had stayed open for so long against so
+much effort. The failed attempts are still worth recording, because neither
+failed for the reason one would guess.
 
 `rusqlite` is pulled in with the `bundled` feature, so every build compiles
-SQLite's C amalgamation — which makes a Windows cross-build need a C compiler
+SQLite's C amalgamation — which makes a Windows *cross*-build need a C compiler
 for Windows, not only a Rust target. That is invisible on the Linux side
-because zig ships a C compiler; it is the whole difficulty on the Windows one.
+because zig ships a C compiler; it was the whole difficulty on the Windows one.
 
 - **`x86_64-pc-windows-msvc` through cargo-xwin** downloads the Microsoft CRT
   and SDK — around 2.5 GB — and then stops at `failed to find tool "clang-cl"`.
   cargo-xwin supplies the headers and libraries but not the toolchain, which
-  wants `clang-cl`, `lld-link` and `llvm-lib` from LLVM. Fixable by installing
-  them; unattempted here because it is a system-package decision. Note that
-  the download alone is a real cost against a 400-minute monthly budget, and
-  large enough to sit awkwardly in a CI cache.
+  wants `clang-cl`, `lld-link` and `llvm-lib` from LLVM. The download alone is
+  a real cost against a metered budget, and large enough to sit awkwardly in a
+  CI cache.
 - **`x86_64-pc-windows-gnu` through zig** gets further — SQLite compiles — and
   fails at the link with `undefined symbol: PyInit_misah._misah`. That is this
   package's `module-name = "misah._misah"` reaching the export-definition file
@@ -680,23 +995,40 @@ because zig ships a C compiler; it is the whole difficulty on the Windows one.
   `PyInit__misah`. It is also the wrong target to want: CPython on Windows is
   built with MSVC, and a GNU-ABI extension is not the supported configuration.
 
-So the way forward on Windows is LLVM plus the MSVC target, not the GNU one.
+On `windows-latest` neither arises. MSVC is the native toolchain there, so the
+target is the ordinary one and `rusqlite` finds the C compiler it wanted all
+along — no CRT to download, no LLVM to install, no ABI to argue about. macOS
+was a licensing question before a technical one, and there too the question is
+narrower than it sounds: cross-compiling needs the Apple SDK, and what the
+licence speaks to is *extracting* one in order to build from Linux. It does not
+arise when the compiler runs on Apple hardware. Both holes were closed by moving
+the build rather than by solving what had been attempted.
 
-**macOS is the other hole**, and there it is a licensing question before a
-technical one — cross-compiling needs the Apple SDK. The ways out are a hosted
-macOS runner (Premium/Ultimate, or free through the GitLab for Open Source
-programme, which this project's GPL-3 licence and public namespace should
-qualify it for), or a mirror onto a service that gives macOS runners to public
-repositories.
+**The source distribution is what everything else gets.** With no wheel
+matching, pip falls back to it and builds, which needs a Rust toolchain on the
+user's machine but no runner here — a harder install rather than no install.
+macOS and Windows no longer depend on that, having wheels of their own, but the
+sdist job earns its place for a second reason: `pip install` on the tarball is
+the only thing anywhere that exercises maturin's rewriting of the manifests when
+it packs a project whose crate lives outside the Python directory, and with the
+version inherited from the workspace that rewriting is a claim to be checked
+rather than assumed. So the job installs *from the tarball* and never from the
+tree, and runs all seven suites against that.
 
-`docs/notebooks/misah.ipynb` is gone rather than repaired. Every path in it was
-dead, not merely the one previously named here: `misah.geometry.geom2d`,
+`docs/notebooks/misah.ipynb` was removed rather than repaired. Every path in it
+was dead, not merely the one previously named here: `misah.geometry.geom2d`,
 `misah.geometry.geom3d`, `misah.orientations.orien3d`,
 `misah.georeferenced.georef2d` — the last of which was a file deleted two
-commits before this line was written — and it compared results against `pygsf`,
-which geogst itself superseded. Nothing in it touched any of the ten functions
-the package exposes today. A notebook covering those would be worth having, and
-would be a new one.
+commits before that line was written — and it compared results against `pygsf`,
+which geogst itself superseded. Nothing in it touched any function the package
+exposes.
+
+`01_kernel_density.ipynb` and `02_stress_field.ipynb` are the new ones that
+line asked for. They are not a repair of the old one and share nothing with it:
+they call the functions that exist, they read no files, and they build their
+data through the forward model so that what the inversion should return is
+known without trusting the inversion. `docs/README.md` says how they are kept
+from going the way of the first.
 
 `lib/examples/test.rs` is gone with it: a nalgebra hello-world computing the
 distance between two points, referring to nothing in this crate, and the sole

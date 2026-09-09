@@ -13,7 +13,14 @@ believes it; the promise is only kept if the symbols the binary references stay
 below the version named. `maturin --zig` sets that floor deliberately, which is
 the whole reason for building this way, and this is what says it worked.
 
-    python3 ci/check_wheel.py <wheel> <x86_64|aarch64>
+For macOS the argument is stronger still. The wheel is `universal2`, one file
+holding both architectures, and it is the only artifact whose halves are not
+both executed: the suites run on the arm64 runner, so the x86-64 slice is
+compiled and never called. A build that quietly produced an arm64-only binary
+would pass every test there is. Reading the slices out of the fat header is what
+says both are present.
+
+    python3 ci/check_wheel.py <wheel> <x86_64|aarch64|arm64|universal2>
 """
 
 from __future__ import annotations
@@ -24,11 +31,17 @@ import struct
 import sys
 import zipfile
 
-# ELF `e_machine` and PE `Machine`, for the architectures this project builds
-# for. Two formats because a Windows extension is a PE .pyd and a Linux one an
-# ELF .so, and the point of the check is not to trust the file name.
+# ELF `e_machine`, PE `Machine` and Mach-O `cputype`, for the architectures this
+# project builds for. Three formats because a Linux extension is an ELF .so, a
+# Windows one a PE .pyd and a macOS one a Mach-O .so, and the point of the check
+# is not to trust the file name.
+#
+# The Mach-O names are Apple's rather than Linux's: `arm64`, not `aarch64`. The
+# same silicon, but the wheel tags, the fat header and every Apple tool say
+# arm64, and a check that renamed it would be inventing a discrepancy of its own.
 ELF_MACHINES = {0x3E: "x86_64", 0xB7: "aarch64"}
 PE_MACHINES = {0x8664: "x86_64", 0xAA64: "aarch64"}
+MACHO_CPUS = {0x01000007: "x86_64", 0x0100000C: "arm64"}
 
 # The highest glibc a wheel may require, by the tag it carries. `maturin --zig`
 # targets 2.17; the manylinux container route reached 2.28. Both are recorded
@@ -73,7 +86,31 @@ def machine_of(blob):
         (value,) = struct.unpack_from("<H", blob, pe_offset + 4)
         return PE_MACHINES.get(value, f"unknown PE machine 0x{value:x}")
 
-    raise SystemExit("the extension is neither ELF nor PE")
+    # A fat Mach-O: a count of slices, then one descriptor each. The header is
+    # big-endian whatever the slices are, being older than the architectures it
+    # now describes. Reported as `universal2` only when the pair is exactly the
+    # one that name means, so a fat file carrying something else is a failure
+    # with its contents named rather than a pass.
+    if blob[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"):
+        # FAT_MAGIC_64 widens the offset and size fields; cputype stays first.
+        stride = 32 if blob[3] == 0xBF else 20
+        (count,) = struct.unpack_from(">I", blob, 4)
+
+        slices = []
+        for index in range(count):
+            (value,) = struct.unpack_from(">I", blob, 8 + index * stride)
+            slices.append(MACHO_CPUS.get(value, f"unknown Mach-O cputype 0x{value:x}"))
+
+        slices = sorted(slices)
+        return "universal2" if slices == ["arm64", "x86_64"] else "+".join(slices)
+
+    # A thin Mach-O, 64- or 32-bit, little-endian as everything Apple still
+    # ships is. cputype is the word after the magic.
+    if blob[:4] in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        (value,) = struct.unpack_from("<I", blob, 4)
+        return MACHO_CPUS.get(value, f"unknown Mach-O cputype 0x{value:x}")
+
+    raise SystemExit("the extension is not ELF, PE or Mach-O")
 
 
 def glibc_versions(blob):

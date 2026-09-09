@@ -67,11 +67,18 @@ impl SearchGrid {
 #[derive(Debug, Clone)]
 pub struct ScoredTensor {
     pub tensor: ReducedStressTensor,
-    /// Mean angular misfit, in degrees, over the faults it could be scored on.
+    /// Mean angular misfit, in degrees, over the faults it could be scored on,
+    /// weighted where `invert_weighted` gave weights.
     pub mean_misfit_degrees: f64,
     /// How many faults that was. A candidate scored on fewer faults than
     /// another is not straightforwardly better for having a lower mean.
     pub faults_scored: usize,
+    /// The same guard, in the form that survives weighting: Kish's effective
+    /// sample size, `(sum w)^2 / sum w^2`. Equal to `faults_scored` exactly
+    /// when the search was unweighted, and the quantity candidates are
+    /// compared on when it was not -- a count cannot tell twenty faults
+    /// contributing equally from nineteen contributing almost nothing.
+    pub effective_sample_size: f64,
 }
 
 /// What a search found.
@@ -96,6 +103,41 @@ const RUNNERS_UP: usize = 5;
 /// one whose faults carry no slickenlines.
 pub fn invert(faults: &[FaultPlane], grid: SearchGrid) -> Option<InversionResult> {
 
+    search(faults, None, grid)
+}
+
+/// Search the grid with each fault counting for as much as its weight says.
+///
+/// `weights` holds one non-negative number per fault, in the same order. The
+/// intended caller is a stress field on a grid: the faults are the whole
+/// dataset, passed once and never rebuilt, while the weights are recomputed at
+/// every node from a kernel of the distance to it. A fault weighted at zero
+/// costs nothing, so a compact kernel makes each node cost what its own
+/// neighbourhood costs rather than what the dataset costs.
+///
+/// What the weights mean is not this function's business, and neither is where
+/// the faults are: geography stays in the caller, which is why this takes
+/// numbers rather than positions.
+///
+/// `None` on the same grounds as [`invert`], plus a `weights` of the wrong
+/// length or holding a negative or NaN value, and plus every weight being
+/// zero -- a node with no data near it has no tensor, which is a real answer
+/// and not an error.
+pub fn invert_weighted(
+    faults: &[FaultPlane],
+    weights: &[f64],
+    grid: SearchGrid,
+) -> Option<InversionResult> {
+
+    search(faults, Some(weights), grid)
+}
+
+fn search(
+    faults: &[FaultPlane],
+    weights: Option<&[f64]>,
+    grid: SearchGrid,
+) -> Option<InversionResult> {
+
     let mut scored: Vec<ScoredTensor> = Vec::new();
     let mut candidates_tried = 0usize;
 
@@ -111,11 +153,12 @@ pub fn invert(faults: &[FaultPlane], grid: SearchGrid) -> Option<InversionResult
             // pair the grid produced and the tensor declines, and it simply
             // does not compete.
             if let Ok(tensor) = ReducedStressTensor::normalized(s1_axis, s3_axis, phi.min(1.0)) {
-                if let Some((mean_misfit_degrees, faults_scored)) = tensor.mean_misfit(faults) {
+                if let Some(summary) = tensor.misfit_summary(faults, weights) {
                     scored.push(ScoredTensor {
                         tensor,
-                        mean_misfit_degrees,
-                        faults_scored,
+                        mean_misfit_degrees: summary.mean_degrees,
+                        faults_scored: summary.faults_scored,
+                        effective_sample_size: summary.effective_sample_size,
                     });
                 }
             }
@@ -130,13 +173,21 @@ pub fn invert(faults: &[FaultPlane], grid: SearchGrid) -> Option<InversionResult
 
     let candidates_scored = scored.len();
 
-    // Sorted by misfit, and by fault count where two candidates tie: a tensor
-    // that explains more of the dataset equally well is the better answer.
+    // Sorted by misfit, and by effective sample size where two candidates tie:
+    // a tensor that explains more of the dataset equally well is the better
+    // answer. The tie-break is on the effective size rather than the count
+    // because a count is blind to weighting, and would rank a candidate held
+    // up by twenty barely-weighted faults above one held up by five real ones.
+    // Unweighted the two are equal, so this leaves `invert` exactly as it was.
     scored.sort_by(|a, b| {
         a.mean_misfit_degrees
             .partial_cmp(&b.mean_misfit_degrees)
             .expect("misfits are finite angles")
-            .then(b.faults_scored.cmp(&a.faults_scored))
+            .then(
+                b.effective_sample_size
+                    .partial_cmp(&a.effective_sample_size)
+                    .expect("effective sample sizes are finite and positive"),
+            )
     });
 
     let best = scored.remove(0);
@@ -409,5 +460,205 @@ mod tests {
             "reversed lineations with no sense should fit perfectly, got {} degrees",
             misfit
         );
+    }
+
+    /// Angle between two S1 axes, in degrees. An axis and its antipode name
+    /// the same one, so the comparison is on the absolute dot product.
+    fn s1_angle(a: &ReducedStressTensor, b: &ReducedStressTensor) -> f64 {
+        a.s1_versor().dot(&b.s1_versor()).abs().clamp(-1.0, 1.0).acos().to_degrees()
+    }
+
+    /// S1 vertical, S3 east-west: extension.
+    fn normal_phase() -> ReducedStressTensor {
+        ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 90.0),
+            GeologicalAxis::new(90.0, 0.0),
+            0.5,
+        )
+        .unwrap()
+    }
+
+    /// S1 and S3 both horizontal: a phase the one above cannot be mistaken for.
+    fn strike_slip_phase() -> ReducedStressTensor {
+        ReducedStressTensor::normalized(
+            GeologicalAxis::new(0.0, 0.0),
+            GeologicalAxis::new(90.0, 0.0),
+            0.5,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unit_weights_invert_exactly_as_no_weights_do() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+        let weights = vec![1.0; faults.len()];
+
+        let plain = invert(&faults, SearchGrid::default()).expect("a scorable set");
+        let weighted =
+            invert_weighted(&faults, &weights, SearchGrid::default()).expect("a scorable set");
+
+        assert_eq!(plain.best.mean_misfit_degrees, weighted.best.mean_misfit_degrees);
+        assert_eq!(plain.best.faults_scored, weighted.best.faults_scored);
+        assert_eq!(s1_angle(&plain.best.tensor, &weighted.best.tensor), 0.0);
+        assert_eq!(plain.candidates_scored, weighted.candidates_scored);
+    }
+
+    #[test]
+    fn equal_weights_leave_the_effective_sample_size_at_the_count() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+
+        // Unit weights are the case `invert` itself relies on, and there the
+        // sums are integer-valued, so the equality is exact rather than close.
+        let unit = vec![1.0; faults.len()];
+        let summary = normal_phase()
+            .misfit_summary(&faults, Some(&unit))
+            .expect("a scorable set");
+
+        assert_eq!(summary.faults_scored, faults.len());
+        assert_eq!(summary.effective_sample_size, faults.len() as f64);
+
+        // Any other constant says the same thing, since what the effective
+        // size follows is the shape of the weights and not their scale -- but
+        // it says it to within rounding, the sums no longer being exact.
+        let scaled = vec![0.7; faults.len()];
+        let summary = normal_phase()
+            .misfit_summary(&faults, Some(&scaled))
+            .expect("a scorable set");
+
+        assert!(
+            (summary.effective_sample_size - faults.len() as f64).abs() < 1.0e-9,
+            "effective sample size {} should be the count, {}",
+            summary.effective_sample_size,
+            faults.len()
+        );
+    }
+
+    #[test]
+    fn the_effective_sample_size_collapses_when_one_fault_carries_the_weight() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+
+        let mut weights = vec![1.0e-3; faults.len()];
+        weights[0] = 1.0;
+
+        let summary = normal_phase()
+            .misfit_summary(&faults, Some(&weights))
+            .expect("a scorable set");
+
+        // Every fault contributed something, so the count is unchanged and
+        // says nothing useful; the effective size is what notices.
+        assert_eq!(summary.faults_scored, faults.len());
+        assert!(
+            summary.effective_sample_size < 1.1,
+            "effective sample size {} should be barely above one",
+            summary.effective_sample_size
+        );
+    }
+
+    #[test]
+    fn a_fault_weighted_at_zero_counts_as_absent() {
+        let mut faults = faults_from(&normal_phase(), &SPREAD);
+        let kept = faults.len();
+        faults.extend(faults_from(&strike_slip_phase(), &SPREAD));
+
+        let mut weights = vec![0.0; faults.len()];
+        weights[..kept].fill(1.0);
+
+        let weighted =
+            invert_weighted(&faults, &weights, SearchGrid::default()).expect("a scorable set");
+        let on_the_subset =
+            invert(&faults[..kept], SearchGrid::default()).expect("a scorable set");
+
+        assert_eq!(
+            weighted.best.mean_misfit_degrees,
+            on_the_subset.best.mean_misfit_degrees
+        );
+        assert_eq!(weighted.best.faults_scored, on_the_subset.best.faults_scored);
+        assert_eq!(s1_angle(&weighted.best.tensor, &on_the_subset.best.tensor), 0.0);
+    }
+
+    #[test]
+    fn weighting_towards_one_of_two_superposed_phases_recovers_that_phase() {
+        // The case the search exists for. A dataset holding two tectonic
+        // phases has two minima, and an unweighted mean lands between them, on
+        // a tensor belonging to neither; weighting is what separates them, and
+        // in a stress field the weights come from distance rather than from a
+        // test knowing the answer.
+        let extension = normal_phase();
+        let transcurrence = strike_slip_phase();
+
+        let mut faults = faults_from(&extension, &SPREAD);
+        let first_phase = faults.len();
+        faults.extend(faults_from(&transcurrence, &SPREAD));
+
+        let mut towards_extension = vec![1.0e-6; faults.len()];
+        towards_extension[..first_phase].fill(1.0);
+
+        let mut towards_transcurrence = vec![1.0; faults.len()];
+        towards_transcurrence[..first_phase].fill(1.0e-6);
+
+        let found_extension = invert_weighted(&faults, &towards_extension, SearchGrid::default())
+            .expect("a scorable set");
+        let found_transcurrence =
+            invert_weighted(&faults, &towards_transcurrence, SearchGrid::default())
+                .expect("a scorable set");
+
+        assert!(
+            s1_angle(&found_extension.best.tensor, &extension) <= 10.0 + 1e-6,
+            "S1 off the extensional phase by {} degrees",
+            s1_angle(&found_extension.best.tensor, &extension)
+        );
+        assert!(
+            s1_angle(&found_transcurrence.best.tensor, &transcurrence) <= 10.0 + 1e-6,
+            "S1 off the strike-slip phase by {} degrees",
+            s1_angle(&found_transcurrence.best.tensor, &transcurrence)
+        );
+
+        // And the control: unweighted, the same data fit far worse, because no
+        // single tensor explains both phases.
+        let mixed = invert(&faults, SearchGrid::default()).expect("a scorable set");
+        assert!(
+            mixed.best.mean_misfit_degrees > found_extension.best.mean_misfit_degrees,
+            "the mixed set fit {} degrees, the weighted one {}",
+            mixed.best.mean_misfit_degrees,
+            found_extension.best.mean_misfit_degrees
+        );
+    }
+
+    #[test]
+    fn weights_of_the_wrong_length_score_nothing() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+        let weights = vec![1.0; faults.len() - 1];
+
+        // Not a truncated answer: zipping would have paired weights with the
+        // wrong faults and returned a plausible-looking number.
+        assert!(invert_weighted(&faults, &weights, SearchGrid::default()).is_none());
+    }
+
+    #[test]
+    fn a_negative_weight_scores_nothing() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+        let mut weights = vec![1.0; faults.len()];
+        weights[2] = -1.0;
+
+        assert!(invert_weighted(&faults, &weights, SearchGrid::default()).is_none());
+    }
+
+    #[test]
+    fn a_nan_weight_scores_nothing() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+        let mut weights = vec![1.0; faults.len()];
+        weights[2] = f64::NAN;
+
+        assert!(invert_weighted(&faults, &weights, SearchGrid::default()).is_none());
+    }
+
+    #[test]
+    fn a_node_with_no_data_near_it_has_no_tensor() {
+        let faults = faults_from(&normal_phase(), &SPREAD);
+        let weights = vec![0.0; faults.len()];
+
+        // A real answer rather than an error: outside the reach of the kernel
+        // there is nothing to invert, and a field is entitled to a hole.
+        assert!(invert_weighted(&faults, &weights, SearchGrid::default()).is_none());
     }
 }

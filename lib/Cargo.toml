@@ -20,6 +20,15 @@ edition = "2021"
 
 [dependencies]
 ndarray = "0.15.4"
+# Not optional, and not behind a feature. A feature would buy the choice of
+# building without it, at the cost of two code paths through the only functions
+# in the crate expensive enough to be worth reading twice -- and since the
+# parallel pass returns bit-for-bit what the sequential one did, there is
+# nothing a caller could want the sequential path *for*. Where the thread count
+# is itself the problem, as in a plugin that must leave its host responsive,
+# rayon's own `ThreadPoolBuilder::install` is the answer and needs nothing from
+# here.
+rayon = "1.10"
 rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 

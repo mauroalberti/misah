@@ -1,22 +1,32 @@
-# Tests on Linux at every push, wheels and a source distribution on tags, and
-# an upload that never happens on its own.
+# Tests on Linux at every push, and a crate upload that never happens on its
+# own. This is still the primary repository; it has simply stopped being the
+# place the Python distribution is built.
 #
-# The two publish jobs at the end are `when: manual`. Neither PyPI nor crates.io
-# lets a version be replaced once uploaded, so the tag builds and checks the
-# artifacts and then waits for someone to press the button, rather than making
-# `git push --tags` the irreversible act.
+# That moved to GitHub on 2026-09-08, where this repository is push-mirrored,
+# for one reason: macOS and Windows runners, free and unmetered on public
+# repositories, on the two platforms most QGIS installations run. Until then
+# neither had a wheel, and the reason was never the code -- the Apple SDK
+# licence question is about extracting an SDK to build from Linux, and does not
+# arise on Apple hardware; `rusqlite`'s bundled feature wants a C compiler, not
+# LLVM. Both were problems of *cross*-compilation, and a native runner dissolves
+# them.
 #
-# Everything here runs on the Linux runners a GitLab Free namespace gets, which
-# is less of a restriction than it sounds: both Linux wheels are cross-compiled
-# with zig from the same x86-64 runner, and `abi3-py39` means one wheel per
-# platform rather than one per platform and interpreter.
+# The Linux wheels and the sdist went with them, and not for tidiness. Two
+# pipelines able to upload the same version to PyPI is a hazard and not a
+# redundancy: a version is final once uploaded, and the second attempt would
+# fail at best. One place builds every artifact, one place uploads them. The
+# reasoning that used to fill this file now lives in `.github/workflows/CI.yml`
+# -- including why the compatibility floor is a decision rather than an
+# accident of an image.
 #
-# macOS is the hole. It cannot be cross-compiled from here without the Apple
-# SDK, which is a licensing question before it is a technical one, so the
-# options are a hosted macOS runner -- Premium/Ultimate, or free through the
-# GitLab for Open Source programme, which this project's GPL-3 licence and
-# public namespace should qualify it for -- or a mirror onto a service that
-# gives macOS runners to public repositories.
+# What stays here is what GitHub does not do: every Rust-side check, the Python
+# suites on Linux, and `cargo publish`. The crate goes to crates.io from here
+# and from nowhere else.
+#
+# `publish:crates` is `when: manual`. crates.io does not let a version be
+# replaced once uploaded, so the tag pipeline runs the tests and then waits for
+# someone to press the button, rather than making `git push --tags` the
+# irreversible act.
 
 default:
   # The latest stable 1.x on Debian bookworm. Floating within the major version
@@ -38,7 +48,7 @@ variables:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    # Tags, or the wheel stage could never run: on a tag pipeline
+    # Tags, or `publish:crates` could never run: on a tag pipeline
     # `$CI_COMMIT_BRANCH` is empty, so without this none of the rules below
     # match and no pipeline is created at all.
     - if: $CI_COMMIT_TAG
@@ -59,7 +69,6 @@ cache:
 
 stages:
   - test
-  - package
   - publish
 
 # The kernel crate, which is where every test lives and which depends on no
@@ -119,12 +128,13 @@ lint:clippy:
 # boundary, or whether a pyo3 signature default resolves. Those are separate
 # claims, and this suite has already caught one of them.
 #
-# The four data-free suites run here. `test_kernels.py` reads the Malpi crop
-# from the geoSurfDEM repository, which is not in this tree and whose row and
-# column counts its expected vertex counts depend on; the DEM committed under
-# `example_data` is a wider crop of the same ASTER tile, so it cannot stand in
-# without rewriting those numbers. Until one of the two is resolved, the raster
-# bindings stay verified by hand.
+# All seven suites run here, the raster one included. `test_kernels.py` reads
+# the Malpi crop from `example_data` and cuts out of it the 200 x 247 window
+# geoSurfDEM computed the golden trace on: the two crops sit on one grid, seven
+# cells apart in each direction, so the wider one committed here contains the
+# narrower value for value and the expected vertex counts carry over unchanged.
+# What used to need a second repository on the machine now needs this checkout
+# and nothing else.
 test:python:
   stage: test
   before_script:
@@ -146,170 +156,26 @@ test:python:
     - python3 pylib/tests/test_mesh.py
     - python3 pylib/tests/test_inversion.py
     - python3 pylib/tests/test_best_fit.py
-
-# ---------------------------------------------------------------------------
-# Wheels and the source distribution
-# ---------------------------------------------------------------------------
-#
-# The distribution, as opposed to the correctness the stage above checks. Only
-# on tags: a wheel from an untagged commit is not something anyone installs,
-# and the Free tier's 400 compute minutes a month are better spent than on
-# rebuilding one per push.
-#
-# `abi3-py39` is what makes this small. The extension links no version-specific
-# CPython symbol, so it is one wheel per *platform* rather than one per platform
-# and interpreter version -- five artifacts instead of thirty.
-#
-# Both Linux targets are cross-compiled with zig, which is not a workaround for
-# lacking runners so much as the better tool. `maturin --zig` links against a
-# glibc chosen at build time rather than whichever the runner happens to carry,
-# so the wheel comes out tagged `manylinux_2_17` -- the compatibility floor is
-# a decision instead of an accident of the image. Building natively in a
-# `quay.io/pypa/manylinux_2_28_x86_64` container was tried first and works, but
-# reaches only 2.28 and needs a container to do it.
-# What every packaging job shares: it runs on tags and it leaves its artifact in
-# `wheels/`, which is also where the publish stage looks for what to upload.
-.tagged:
-  stage: package
-  rules:
-    - if: $CI_COMMIT_TAG
-  artifacts:
-    paths:
-      - wheels/
-    expire_in: 1 month
-
-.wheel:
-  extends: .tagged
-  before_script:
-    # PEP 668 marks the Debian interpreter externally managed, so pip needs a
-    # virtualenv even here. zig arrives through pip as well, which keeps this
-    # job free of any system package beyond the interpreter.
-    - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
-    - python3 -m venv /tmp/venv
-    - . /tmp/venv/bin/activate && pip install -q maturin ziglang cargo-zigbuild
-
-# The one wheel this pipeline can do more than build: the runner is x86-64
-# Linux, so the artifact can be installed and the test suites run against it.
-# That is a stronger claim than `test:python` makes -- that job builds for the
-# host, this one checks the cross-compiled article a user would actually get.
-wheel:linux:x86_64:
-  extends: .wheel
-  script:
-    - . /tmp/venv/bin/activate
-    - rustup target add x86_64-unknown-linux-gnu
-    - cd pylib && maturin build --release --zig --target x86_64-unknown-linux-gnu --out ../wheels
-    - cd ..
-    - python3 ci/check_wheel.py 'wheels/*x86_64*.whl' x86_64
-    - pip install -q numpy && pip install --no-index wheels/*x86_64*.whl
-    - python3 pylib/tests/test_stress.py
-    - python3 pylib/tests/test_mesh.py
-    - python3 pylib/tests/test_inversion.py
-    - python3 pylib/tests/test_best_fit.py
-
-# Nothing here can run an aarch64 binary, so the check is what can be checked
-# without executing it: that the extension inside the wheel really is ARM, and
-# that its glibc requirements match the tag the wheel claims. A cross-build
-# that silently produced a host binary would pass every other test in this
-# file.
-wheel:linux:aarch64:
-  extends: .wheel
-  script:
-    - . /tmp/venv/bin/activate
-    - rustup target add aarch64-unknown-linux-gnu
-    - cd pylib && maturin build --release --zig --target aarch64-unknown-linux-gnu --out ../wheels
-    - cd ..
-    - python3 ci/check_wheel.py 'wheels/*aarch64*.whl' aarch64
-
-# The source distribution, which is what macOS and Windows get until they have
-# wheels of their own: with no matching wheel pip falls back to this and builds
-# it, needing a Rust toolchain on the user's machine but not a runner here.
-# Without it those platforms get no install at all, not a slower one.
-#
-# Building it is one command; the rest of this job is the part worth having.
-# `pip install` on the tarball takes the same path a user on an unsupported
-# platform takes -- unpack, resolve the inherited workspace version, compile the
-# extension, and only then run the suites -- and none of the other jobs exercise
-# it. maturin rewrites the manifests when it packs a project whose crate lives
-# outside the Python directory, so the sdist working at all is a claim about
-# that rewriting rather than about the code.
-#
-# No zig and no cross-compilation: this is a tarball, so `.tagged` directly.
-wheel:sdist:
-  extends: .tagged
-  before_script:
-    - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
-    - python3 -m venv /tmp/venv
-    - . /tmp/venv/bin/activate && pip install -q maturin numpy
-  script:
-    - . /tmp/venv/bin/activate
-    - cd pylib && maturin sdist --out ../wheels
-    - cd ..
-    # From the tarball, not from the tree: the point is that what gets uploaded
-    # builds, not that the working copy does.
-    - pip install wheels/*.tar.gz
-    - python3 pylib/tests/test_stress.py
-    - python3 pylib/tests/test_mesh.py
-    - python3 pylib/tests/test_inversion.py
-    - python3 pylib/tests/test_best_fit.py
+    - python3 pylib/tests/test_kernels.py
+    - python3 pylib/tests/test_fields.py
+    - python3 pylib/tests/test_mechanisms.py
 
 # ---------------------------------------------------------------------------
 # Publishing
 # ---------------------------------------------------------------------------
 #
-# Both jobs are manual. A version is final once uploaded -- PyPI and crates.io
-# alike refuse to replace one -- so the pipeline stops with the artifacts built
-# and checked, and someone decides. `git push --tags` stays reversible; pressing
-# the button does not.
+# One job now, and it is manual, for the reason the header gives.
 #
-# They are also independent of each other: the Python distribution is `misah` on
-# PyPI, the crate is `misah` on crates.io, and one can go out without the other.
-
-# PyPI through Trusted Publishing, so no token is stored anywhere in this
-# project: GitLab mints a short-lived OIDC token for the job, and twine trades it
-# for an upload token itself. Nothing here does that exchange by hand -- twine
-# does it when it finds `PYPI_ID_TOKEN` and no credentials, which is also how
-# geogst publishes.
+# PyPI used to be published from here too, through Trusted Publishing on a
+# `release` environment, alongside the wheel jobs that fed it. Both went to
+# GitHub together: artifacts and upload belong in one place, or a release
+# becomes two buttons in two systems for one version. The trusted publisher
+# registered on PyPI for this GitLab project is now unused, and can be removed
+# from the project's Publishing settings -- leaving it is a standing permission
+# for a pipeline that no longer intends to use it.
 #
-# It needs configuring once on the PyPI side, and a publisher is per project
-# rather than per account -- being one for geogst grants nothing here. Since
-# `misah` does not exist on PyPI yet, that means a *pending* publisher, created
-# from the account sidebar under Publishing: PyPI project name `misah`,
-# namespace `mauroalberti`, repository `misah`, pipeline file `.gitlab-ci.yml`,
-# environment `release` to match the job below. It becomes an ordinary publisher
-# on the first successful upload.
-publish:pypi:
-  stage: publish
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: manual
-  needs:
-    - wheel:linux:x86_64
-    - wheel:linux:aarch64
-    - wheel:sdist
-  id_tokens:
-    PYPI_ID_TOKEN:
-      aud: pypi
-  # Optional to PyPI, and worth having: an environment is what lets a release be
-  # gated on approval by whoever is allowed to deploy to it, rather than on
-  # whoever can press a manual job. The name has to match what the publisher was
-  # registered with, or PyPI rejects the token.
-  environment:
-    name: release
-    url: https://pypi.org/project/misah/
-  before_script:
-    - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
-    - python3 -m venv /tmp/venv
-    - . /tmp/venv/bin/activate && pip install -q --upgrade twine
-  script:
-    - . /tmp/venv/bin/activate
-    # Everything the package stage built: two wheels and the tarball.
-    - ls -l wheels/
-    - twine check wheels/*
-    # No credentials given, so twine uses Trusted Publishing.
-    - twine upload wheels/*
+# The two were independent anyway: the Python distribution is `misah` on PyPI,
+# the crate is `misah` on crates.io, and one can go out without the other.
 
 # crates.io, which takes the kernel crate alone. `misah-py` is not published
 # there: it is the extension, it depends on `misah` by path rather than by

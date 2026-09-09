@@ -28,6 +28,11 @@ numpy = "0.29"
 # abi3-py39 yields a single wheel valid for every Python from 3.9 on, which is
 # what makes the extension installable beside a QGIS interpreter we do not pick.
 pyo3 = { version = "0.29", features = ["abi3-py39"] }
+# The same rayon the core crate already pulls in, named here because this crate
+# parallelises on its own account: `kagan_angle_matrix` is N^2/2 rotations and
+# belongs on every core, and that loop lives on this side of the boundary
+# rather than in the kernel.
+rayon = "1.10"
 
 [lib]
 # The extension ships as misah._misah, private because callers reach its
